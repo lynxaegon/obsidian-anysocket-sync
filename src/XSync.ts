@@ -6,6 +6,8 @@ import {
 import AnySocketLoader from "./libs/AnySocketLoader";
 import XCache from "./libs/cache";
 
+// TODO: VALIDATE THAT EVERYHING WORKS ON MOBILE
+
 // TODO: On Plugin Enabled or on AnySocket ip change, force a check, events registered won't run automatically
 export default class XSync {
 	plugin: Plugin;
@@ -39,7 +41,7 @@ export default class XSync {
 		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
 			peer.e2e();
 		}).catch(() => {
-			new Notice("AnySocket Sync - Could not connect to the server. Check your internet connection or the host/port/password in the settings page");
+			new Notice("AnySocket Sync - Could not connect to the server. Check your internet connection or plugin settings");
 		});
 	}
 

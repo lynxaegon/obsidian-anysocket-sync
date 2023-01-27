@@ -36,11 +36,11 @@ export default class AnySocketSyncPlugin extends Plugin {
 		this.addSettingTab(new AnySocketSyncSettingTab(this));
 
 		this.xSync = new XSync(this);
-		this.xSync.load();
+		this.xSync.load(false);
 	}
 
 	onunload() {
-		this.xSync.unload();
+		this.xSync.unload(false);
 	}
 
 	async loadSettings() {
