@@ -1,9 +1,8 @@
+// @ts-nocheck
 import {
-	App,
 	TAbstractFile,
-	Plugin, TFile,
+	Plugin, TFile, Notice,
 } from "obsidian";
-import * as crypto from "crypto";
 import AnySocketLoader from "./libs/AnySocketLoader";
 import XCache from "./libs/cache";
 
@@ -12,35 +11,13 @@ export default class XSync {
 	plugin: Plugin;
 	eventRefs: any = {};
 	anysocket: any;
-	anysocketEnabled: boolean = true;
+	anysocketEnabled: boolean = false;
 	xCache: XCache = new XCache();
 
 	constructor(plugin: Plugin) {
-		console.log("welcome to anysocket sync")
 		this.plugin = plugin;
 		AnySocketLoader.load();
-
-		// @ts-ignore
 		this.anysocket = new AnySocket();
-		this.anysocket.authPacket = () => {
-			return "asd";
-		}
-
-		this.anysocket.on("e2e", async (peer: any) => {
-			// @ts-ignore
-			this.getTime = peer.getSyncedTime.bind(peer);
-			await this.getTime();
-
-			if(app.workspace.layoutReady) {
-				await this.init();
-			} else {
-				app.workspace.on("layout-ready", this.init.bind(this));
-			}
-		});
-		this.anysocket.on("disconnected", (peer: any) => {
-			console.log("disconnected");
-			this.anysocketRetry();
-		});
 	}
 
 	async getTime() {
@@ -52,52 +29,52 @@ export default class XSync {
 			return;
 		}
 
-		console.log("trying to connect...");
-		this.anysocket.connect("ws", "10.10.0.17",3000).then(async (peer: any) => {
+		if(!this.plugin.settings.password) {
+			console.log("AnySocket Sync - Requires setup");
+			new Notice("AnySocket Sync - Requires setup");
+			this.unload(true);
+			return;
+		}
+
+		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
 			peer.e2e();
 		}).catch(() => {
-			console.log("couldn't connect");
-			this.anysocketRetry();
+			new Notice("AnySocket Sync - Could not connect to the server. Check your internet connection or the host/port/password in the settings page");
 		});
 	}
 
 	anysocketRetry() {
-		console.log("retrying in 1s");
 		setTimeout(this.anysocketConnect.bind(this), 1000);
 	}
 
-	getSHA1(data: any) {
+	async getSHA1(data: any) {
 		if(!data)
 			return null;
 
-		let sha = crypto.createHash('sha1');
-		sha.update(data)
-		return sha.digest('hex');
+		let sha = await crypto.subtle.digest("SHA-1", new TextEncoder("utf-8").encode(data));
+		return Array.prototype.map.call(new Uint8Array(sha), x=>(('00'+x.toString(16)).slice(-2))).join('');
 	}
 
-	async init() {
-		// @ts-ignore
+	async sync() {
 		let data: any = [];
 		await this.xCache.iterateFiles(async (item: TFile) => {
 			data.push({
 				folder: !!item.children,
 				path: item.path,
 				mtime: item.stat?.mtime,
-				sha1: this.getSHA1(await this.xCache.read(item.path))
+				sha1: await this.getSHA1(await this.xCache.read(item.path))
 			});
 		});
 		this.anysocket.broadcast({
-			type: "init",
+			type: "sync",
 			data: data
 		});
 	}
 
-	async process(type: string, file: TAbstractFile, args: any) {
+	async processLocalEvent(type: string, file: TAbstractFile, args: any) {
 		let path = file.path;
 
-		// @ts-ignore
 		try {
-			// modify supports mtime
 			let sha1 = await this.getSHA1(await this.xCache.read(path));
 			this.anysocket.broadcast({
 				type: "file_event",
@@ -118,7 +95,7 @@ export default class XSync {
 
 	registerEvent(type: any) {
 		this.eventRefs[type] = app.vault.on(type, async (file, ...args) => {
-			await this.process(type, file, args);
+			await this.processLocalEvent(type, file, args);
 		});
 	}
 
@@ -126,7 +103,10 @@ export default class XSync {
 		app.vault.offref(this.eventRefs[type])
 	}
 
-	load() {
+	load(internal) {
+		if(!internal) {
+			console.log("AnySocket Sync - Enabled");
+		}
 		this.anysocketEnabled = true;
 
 		this.registerEvent("create");
@@ -134,35 +114,50 @@ export default class XSync {
 		this.registerEvent("delete");
 		this.registerEvent("rename");
 
-		app.workspace.on("file-open", this.onFileOpen.bind(this));
+		this.anysocket.authPacket = () => {
+			return this.plugin.settings.password;
+		}
+
 		this.anysocket.on("message", async (packet: any) => {
-			console.log(packet.msg);
 			if(packet.msg.type == "upload") {
 				this.anysocket.broadcast({
 					type: "upload",
 					data: {
 						path: packet.msg.path,
 						file: await this.xCache.read(packet.msg.path),
-						// @ts-ignore
 						mtime: this.xCache.getFile(packet.msg.path).stat.mtime
 					},
 				});
 			} else if(packet.msg.type == "download") {
 				console.log("recv:", packet.msg.data.path, packet.msg.data.mtime);
-				this.xCache.write(packet.msg.data.path, packet.msg.data.file, packet.msg.data.mtime);
+				await this.xCache.write(packet.msg.data.path, packet.msg.data.file, packet.msg.data.mtime);
 			} else if(packet.msg.type == "delete") {
-				this.xCache.delete(packet.msg.path);
+				await this.xCache.delete(packet.msg.path);
 			}
+		});
+
+		this.anysocket.on("e2e", async (peer: any) => {
+			new Notice("🟢 AnySocket Sync - Connected");
+			this.plugin.ribbonIcon.style.color = "";
+			this.getTime = peer.getSyncedTime.bind(peer);
+			await this.getTime();
+
+			if(app.workspace.layoutReady) {
+				await this.sync();
+			} else {
+				app.workspace.on("layout-ready", this.sync.bind(this));
+			}
+		});
+		this.anysocket.on("disconnected", (peer: any) => {
+			new Notice("🔴 AnySocket Sync - Lost connection");
+			this.plugin.ribbonIcon.style.color = "red";
+			this.anysocketRetry();
 		});
 
 		this.anysocketConnect();
 	}
 
-	onFileOpen(file: TFile) {
-		console.log("file-open", file);
-	}
-
-	unload() {
+	unload(internal) {
 		this.anysocketEnabled = false;
 
 		this.unregisterEvent("create");
@@ -170,6 +165,13 @@ export default class XSync {
 		this.unregisterEvent("delete");
 		this.unregisterEvent("rename");
 
+		this.anysocket.removeAllListeners();
+
 		this.anysocket.stop();
+
+		if(!internal) {
+			console.log("AnySocket Sync - Disabled");
+		}
+		this.plugin.ribbonIcon.style.color = "red";
 	}
 }
