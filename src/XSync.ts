@@ -11,15 +11,29 @@ import XCache from "./libs/cache";
 // TODO: On Plugin Enabled or on AnySocket ip change, force a check, events registered won't run automatically
 export default class XSync {
 	plugin: Plugin;
+	isEnabled = false;
 	eventRefs: any = {};
 	anysocket: any;
 	anysocketEnabled: boolean = false;
+	isAnySocketConnected: boolean = false;
 	xCache: XCache = new XCache();
+	reloadTimeout = null;
+	notifiedOfConnectError = false;
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
 		AnySocketLoader.load();
 		this.anysocket = new AnySocket();
+
+		if(app.isMobile) {
+			activeWindow.onblur = () => {
+				this.unload(true);
+				clearTimeout(this.reloadTimeout);
+			};
+			activeWindow.onfocus = () => {
+				this.reload();
+			};
+		}
 	}
 
 	async getTime() {
@@ -30,7 +44,7 @@ export default class XSync {
 		if(!this.anysocketEnabled) {
 			return;
 		}
-
+		
 		if(!this.plugin.settings.password) {
 			console.log("AnySocket Sync - Requires setup");
 			new Notice("AnySocket Sync - Requires setup");
@@ -40,13 +54,16 @@ export default class XSync {
 
 		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
 			peer.e2e();
-		}).catch(() => {
-			new Notice("AnySocket Sync - Could not connect to the server. Check your internet connection or plugin settings");
+			this.notifiedOfConnectError = false;
+		}).catch((e) => {
+			console.error("AnySocket Connect Error", e);
+			this.isAnySocketConnected = false;
+			if(!this.notifiedOfConnectError) {
+				this.notifiedOfConnectError = true;
+				new Notice("AnySocket Sync - Could not connect to the server");
+			}
+			this.reload();
 		});
-	}
-
-	anysocketRetry() {
-		setTimeout(this.anysocketConnect.bind(this), 1000);
 	}
 
 	async getSHA1(data: any) {
@@ -91,7 +108,7 @@ export default class XSync {
 			});
 		}
 		catch(e) {
-			console.log(e);
+			console.error(e);
 		}
 	}
 
@@ -106,10 +123,14 @@ export default class XSync {
 	}
 
 	load(internal) {
+		if(!this.isEnabled)
+			return;
+
 		if(!internal) {
 			console.log("AnySocket Sync - Enabled");
 		}
 		this.anysocketEnabled = true;
+		this.anysocket.removeAllListeners();
 
 		this.registerEvent("create");
 		this.registerEvent("modify");
@@ -139,21 +160,20 @@ export default class XSync {
 		});
 
 		this.anysocket.on("e2e", async (peer: any) => {
-			new Notice("🟢 AnySocket Sync - Connected");
-			this.plugin.ribbonIcon.style.color = "";
+			this.isAnySocketConnected = true;
+			this.notifyConnectionStatus();
 			this.getTime = peer.getSyncedTime.bind(peer);
 			await this.getTime();
 
-			if(app.workspace.layoutReady) {
+			app.workspace.onLayoutReady(async () => {
 				await this.sync();
-			} else {
-				app.workspace.on("layout-ready", this.sync.bind(this));
-			}
+				console.log("sync");
+			});
 		});
 		this.anysocket.on("disconnected", (peer: any) => {
-			new Notice("🔴 AnySocket Sync - Lost connection");
-			this.plugin.ribbonIcon.style.color = "red";
-			this.anysocketRetry();
+			this.isAnySocketConnected = false;
+			this.notifyConnectionStatus();
+			this.reload();
 		});
 
 		this.anysocketConnect();
@@ -167,13 +187,34 @@ export default class XSync {
 		this.unregisterEvent("delete");
 		this.unregisterEvent("rename");
 
-		this.anysocket.removeAllListeners();
-
 		this.anysocket.stop();
+
+		this.anysocket.removeAllListeners();
 
 		if(!internal) {
 			console.log("AnySocket Sync - Disabled");
 		}
 		this.plugin.ribbonIcon.style.color = "red";
+	}
+
+	reload() {
+		this.unload(true);
+		clearTimeout(this.reloadTimeout);
+		this.reloadTimeout = setTimeout(() => {
+			this.load(true);
+		}, 1000);
+	}
+
+	notifyConnectionStatus() {
+		if(this.isAnySocketConnected) {
+			new Notice("🟢 AnySocket Sync - Connected");
+			this.plugin.ribbonIcon.style.color = "";
+		}
+		else {
+			new Notice("🔴 AnySocket Sync - Lost connection");
+			this.plugin.ribbonIcon.style.color = "red";
+
+			this.reload();
+		}
 	}
 }
