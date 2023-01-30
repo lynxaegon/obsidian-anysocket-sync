@@ -69,11 +69,11 @@ export default class XSync {
 		});
 	}
 
-	async getSHA1(data: any) {
+	async getSHA(data: any) {
 		if(!data)
 			return null;
 
-		let sha = await crypto.subtle.digest("SHA-1", new TextEncoder("utf-8").encode(data));
+		let sha = await crypto.subtle.digest("SHA-256", new TextEncoder("utf-8").encode(data));
 		return Array.prototype.map.call(new Uint8Array(sha), x=>(('00'+x.toString(16)).slice(-2))).join('');
 	}
 
@@ -84,7 +84,7 @@ export default class XSync {
 				folder: !!item.children,
 				path: item.path,
 				mtime: item.stat?.mtime,
-				sha1: await this.getSHA1(await this.xCache.read(item.path))
+				sha1: await this.getSHA(await this.xCache.read(item.path))
 			});
 		});
 		this.anysocket.broadcast({
@@ -97,7 +97,7 @@ export default class XSync {
 		let path = file.path;
 
 		try {
-			let sha1 = await this.getSHA1(await this.xCache.read(path));
+			let sha1 = await this.getSHA(await this.xCache.read(path));
 			this.anysocket.broadcast({
 				type: "file_event",
 				data: {
@@ -141,7 +141,7 @@ export default class XSync {
 		this.registerEvent("delete");
 		this.registerEvent("rename");
 
-		let password = await this.getSHA1(this.anysocket.id.substring(0, 16) +
+		let password = await this.getSHA(this.anysocket.id.substring(0, 16) +
 			this.plugin.settings.password +
 			this.anysocket.id.substring(16))
 
@@ -149,7 +149,7 @@ export default class XSync {
 			return password;
 		}
 		this.anysocket.onAuth = async (packet) => {
-			return await this.getSHA1(packet.id.substring(0, 16) +
+			return await this.getSHA(packet.id.substring(0, 16) +
 				this.plugin.settings.password +
 				packet.id.substring(16)) == packet.auth;
 		}
