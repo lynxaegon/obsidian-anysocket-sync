@@ -7,7 +7,6 @@ import AnySocketLoader from "./libs/AnySocketLoader";
 import XCache from "./libs/cache";
 
 // TODO: VALIDATE THAT EVERYHING WORKS ON MOBILE
-// TODO: On Plugin Enabled or on AnySocket ip change, force a check, events registered won't run automatically
 export default class XSync {
 	plugin: Plugin;
 	isEnabled = false;
@@ -51,6 +50,11 @@ export default class XSync {
 			return;
 		}
 
+		// Used only to keep the same AnySocket ID after hot reload
+		if(window._anysocketID) {
+			this.anysocket.id = window._anysocketID;
+			delete window._anysocketID;
+		}
 		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
 			peer.e2e();
 			this.notifiedOfConnectError = false;
@@ -121,13 +125,14 @@ export default class XSync {
 		app.vault.offref(this.eventRefs[type])
 	}
 
-	load(internal) {
+	async load(internal) {
 		if(!this.isEnabled)
 			return;
 
 		if(!internal) {
 			console.log("AnySocket Sync ("+ this.plugin.VERSION +") - Enabled");
 		}
+
 		this.anysocketEnabled = true;
 		this.anysocket.removeAllListeners();
 
@@ -136,8 +141,15 @@ export default class XSync {
 		this.registerEvent("delete");
 		this.registerEvent("rename");
 
+		let password = await this.getSHA1(this.anysocket.id.substring(0, 16) +
+			this.plugin.settings.password +
+			this.anysocket.id.substring(16))
+
 		this.anysocket.authPacket = () => {
-			return this.plugin.settings.password;
+			return password;
+		}
+		this.anysocket.onAuth = (packet) => {
+			return true;
 		}
 
 		this.anysocket.on("message", async (packet: any) => {
@@ -171,17 +183,17 @@ export default class XSync {
 					version: this.plugin.VERSION,
 					build: this.plugin.BUILD
 				}, true).then(async packet => {
-					console.log("got reply", packet.msg);
 					if(packet.msg.type == "ok") {
 						this.notifyConnectionStatus();
 						await this.sync();
-						console.log("sync");
 
 					} else if (packet.msg.type == "update") {
 						const BASE = ".obsidian/plugins/obsidian-anysocket-sync/";
 						for(let item of packet.msg.files) {
 							await app.vault.adapter.write(BASE + item.path, item.data);
 						}
+
+						window._anysocketID = this.anysocket.id;
 						// ignore disconnected message
 						this.anysocket.removeAllListeners("disconnected");
 						app.plugins.disablePlugin("obsidian-anysocket-sync");
