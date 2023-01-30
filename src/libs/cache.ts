@@ -17,7 +17,7 @@ export default class XCache {
 
 	async read(path: string) {
 		let file: TFile | undefined = this.getFile(path);
-		if(file) {
+		if(file && !file.children) {
 			return await app.vault.cachedRead(file);
 		}
 		return null;
@@ -42,6 +42,11 @@ export default class XCache {
 		}
 
 		return true;
+	}
+
+	async rename(oldPath: any, newPath: any) {
+		let file = this.getFile(oldPath);
+		await app.vault.rename(file, newPath);
 	}
 
 	async delete(path: any) {

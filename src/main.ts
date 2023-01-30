@@ -5,8 +5,6 @@ import {
 } from 'obsidian';
 import XSync from './XSync';
 
-// Remember to rename these classes and interfaces!
-
 interface AnySocketSyncSettings {
 	host: string;
 	port: string;
@@ -20,6 +18,8 @@ const DEFAULT_SETTINGS: AnySocketSyncSettings = {
 }
 
 export default class AnySocketSyncPlugin extends Plugin {
+	VERSION = "__anysocketsync_version__";
+	BUILD = "__anysocketsync_build__";
 	settings: AnySocketSyncSettings;
 	xSync: XSync;
 	ribbonIcon: HTMLElement;

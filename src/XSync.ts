@@ -7,7 +7,6 @@ import AnySocketLoader from "./libs/AnySocketLoader";
 import XCache from "./libs/cache";
 
 // TODO: VALIDATE THAT EVERYHING WORKS ON MOBILE
-
 // TODO: On Plugin Enabled or on AnySocket ip change, force a check, events registered won't run automatically
 export default class XSync {
 	plugin: Plugin;
@@ -47,7 +46,7 @@ export default class XSync {
 		
 		if(!this.plugin.settings.password) {
 			console.log("AnySocket Sync - Requires setup");
-			new Notice("AnySocket Sync - Requires setup");
+			new Notice("🟡 AnySocket Sync - Requires setup");
 			this.unload(true);
 			return;
 		}
@@ -60,7 +59,7 @@ export default class XSync {
 			this.isAnySocketConnected = false;
 			if(!this.notifiedOfConnectError) {
 				this.notifiedOfConnectError = true;
-				new Notice("AnySocket Sync - Could not connect to the server");
+				new Notice("🟡 AnySocket Sync - Could not connect to the server");
 			}
 			this.reload();
 		});
@@ -127,7 +126,7 @@ export default class XSync {
 			return;
 
 		if(!internal) {
-			console.log("AnySocket Sync - Enabled");
+			console.log("AnySocket Sync ("+ this.plugin.VERSION +") - Enabled");
 		}
 		this.anysocketEnabled = true;
 		this.anysocket.removeAllListeners();
@@ -156,18 +155,44 @@ export default class XSync {
 				await this.xCache.write(packet.msg.data.path, packet.msg.data.file, packet.msg.data.mtime);
 			} else if(packet.msg.type == "delete") {
 				await this.xCache.delete(packet.msg.path);
+			} else if(packet.msg.type == "rename") {
+				await this.xCache.rename(packet.msg.data.oldPath, packet.msg.data.newPath);
 			}
 		});
 
 		this.anysocket.on("e2e", async (peer: any) => {
 			this.isAnySocketConnected = true;
-			this.notifyConnectionStatus();
 			this.getTime = peer.getSyncedTime.bind(peer);
 			await this.getTime();
 
 			app.workspace.onLayoutReady(async () => {
-				await this.sync();
-				console.log("sync");
+				peer.send({
+					type: "version",
+					version: this.plugin.VERSION,
+					build: this.plugin.BUILD
+				}, true).then(async packet => {
+					console.log("got reply", packet.msg);
+					if(packet.msg.type == "ok") {
+						this.notifyConnectionStatus();
+						await this.sync();
+						console.log("sync");
+
+					} else if (packet.msg.type == "update") {
+						const BASE = ".obsidian/plugins/obsidian-anysocket-sync/";
+						for(let item of packet.msg.files) {
+							await app.vault.adapter.write(BASE + item.path, item.data);
+						}
+						// ignore disconnected message
+						this.anysocket.removeAllListeners("disconnected");
+						app.plugins.disablePlugin("obsidian-anysocket-sync");
+						new Notice("🟡 AnySocket Sync - Updated to version: " + packet.msg.version);
+						app.plugins.enablePlugin("obsidian-anysocket-sync");
+					} else {
+						this.anysocket.removeAllListeners();
+						this.unload(true);
+						new Notice("🟡 AnySocket Sync - Incompatible client version " + this.plugin.VERSION);
+					}
+				});
 			});
 		});
 		this.anysocket.on("disconnected", (peer: any) => {
@@ -192,7 +217,7 @@ export default class XSync {
 		this.anysocket.removeAllListeners();
 
 		if(!internal) {
-			console.log("AnySocket Sync - Disabled");
+			console.log("AnySocket Sync ("+ this.plugin.VERSION +") - Disabled");
 		}
 		this.plugin.ribbonIcon.style.color = "red";
 	}
