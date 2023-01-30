@@ -148,8 +148,10 @@ export default class XSync {
 		this.anysocket.authPacket = () => {
 			return password;
 		}
-		this.anysocket.onAuth = (packet) => {
-			return true;
+		this.anysocket.onAuth = async (packet) => {
+			return await this.getSHA1(packet.id.substring(0, 16) +
+				this.plugin.settings.password +
+				packet.id.substring(16)) == packet.auth;
 		}
 
 		this.anysocket.on("message", async (packet: any) => {
