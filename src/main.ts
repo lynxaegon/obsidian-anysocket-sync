@@ -27,9 +27,9 @@ export default class AnySocketSyncPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
-		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', (evt: MouseEvent) => {
+		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', async (evt: MouseEvent) => {
 			// do nothing
-			this.xSync.notifyConnectionStatus();
+			await this.xSync.enabled(!this.xSync.isEnabled);
 		});
 		this.ribbonIcon.style.color = "red";
 
@@ -37,13 +37,11 @@ export default class AnySocketSyncPlugin extends Plugin {
 		this.addSettingTab(new AnySocketSyncSettingTab(this));
 
 		this.xSync = new XSync(this);
-		this.xSync.isEnabled = true;
-		this.xSync.load(false);
+		await this.xSync.enabled(true);
 	}
 
-	onunload() {
-		this.xSync.isEnabled = false;
-		this.xSync.unload(false);
+	async onunload() {
+		await this.xSync.enabled(false);
 	}
 
 	async loadSettings() {

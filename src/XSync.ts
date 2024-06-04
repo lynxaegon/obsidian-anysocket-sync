@@ -1,122 +1,112 @@
 // @ts-nocheck
 import {
 	TAbstractFile,
-	Plugin, TFile, Notice,
+	Plugin, Notice,
 } from "obsidian";
-import AnySocketLoader from "./libs/AnySocketLoader";
-import XCache from "./libs/cache";
+import AnysocketManager from "./libs/AnysocketManager";
+import Utils from "./libs/Utils";
+import Storage from "./libs/fs/Storage";
 
-// TODO: VALIDATE THAT EVERYHING WORKS ON MOBILE
+const DEBUG = true;
+
+// TODO: implement storage tree compaction (both server&client)
 export default class XSync {
 	plugin: Plugin;
 	isEnabled = false;
 	eventRefs: any = {};
 	anysocket: any;
-	anysocketEnabled: boolean = false;
-	isAnySocketConnected: boolean = false;
-	xCache: XCache = new XCache();
+	storage: Storage = new Storage();
 	reloadTimeout = null;
-	notifiedOfConnectError = false;
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
-		AnySocketLoader.load();
-		this.anysocket = new AnySocket();
+		this.anysocket = new AnysocketManager(this);
 
-		if(app.isMobile) {
-			activeWindow.onblur = () => {
-				this.unload(true);
-				clearTimeout(this.reloadTimeout);
-			};
-			activeWindow.onfocus = () => {
-				this.reload();
-			};
-		}
+		/* realtime CRDT sync
+		this.plugin.registerEditorExtension(
+			EditorView.updateListener.of((update) => {
+				if (update.changes) {
+					// Iterate over the changes
+					update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+						if (fromA === toA && fromB !== toB) {
+							// This is an insertion
+							console.log("Insertion detected from", fromB, "to", toB, ":", inserted.toString());
+						} else if (fromA !== toA && fromB === toB) {
+							// This is a deletion
+							console.log("Deletion detected from", fromA, "to", toA);
+						} else {
+							// This is a replace (deletion followed by an insertion)
+							console.log("Replace detected from", fromA, "to", toA, "with", inserted.toString());
+						}
+					});
+				}
+			})
+		);
+		 */
 	}
 
-	async getTime() {
-		// replaced on connect
-	}
-
-	anysocketConnect() {
-		if(!this.anysocketEnabled) {
-			return;
-		}
-		
-		if(!this.plugin.settings.password) {
-			console.log("AnySocket Sync - Requires setup");
-			new Notice("🟡 AnySocket Sync - Requires setup");
-			this.unload(true);
-			return;
-		}
-
-		// Used only to keep the same AnySocket ID after hot reload
-		if(window._anysocketID) {
-			this.anysocket.id = window._anysocketID;
-			delete window._anysocketID;
-		}
-		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
-			peer.e2e();
-			this.notifiedOfConnectError = false;
-		}).catch((e) => {
-			console.error("AnySocket Connect Error", e);
-			this.isAnySocketConnected = false;
-			if(!this.notifiedOfConnectError) {
-				this.notifiedOfConnectError = true;
-				new Notice("🟡 AnySocket Sync - Could not connect to the server");
+	async enabled(value) {
+		if (this.isEnabled !== value) {
+			this.isEnabled = value;
+			this.anysocket.isEnabled = value;
+			if (this.isEnabled) {
+				await this.load(false);
+			} else {
+				this.unload(false);
 			}
-			this.reload();
-		});
-	}
-
-	async getSHA(data: any) {
-		if(!data)
-			return null;
-
-		let sha = await crypto.subtle.digest("SHA-256", new TextEncoder("utf-8").encode(data));
-		return Array.prototype.map.call(new Uint8Array(sha), x=>(('00'+x.toString(16)).slice(-2))).join('');
+		}
 	}
 
 	async sync() {
-		let data: any = [];
-		await this.xCache.iterateFiles(async (item: TFile) => {
+		DEBUG && console.log("sync");
+		let data = [];
+		await this.storage.iterate(async (item: any) => {
+			let result = await this.getMetadata("sync", item, item.stat.mtime);
 			data.push({
-				folder: !!item.children,
 				path: item.path,
-				mtime: item.stat?.mtime,
-				sha1: await this.getSHA(await this.xCache.read(item.path))
+				metadata: result.metadata
 			});
 		});
+
 		this.anysocket.broadcast({
 			type: "sync",
 			data: data
 		});
 	}
 
-	async processLocalEvent(type: string, file: TAbstractFile, args: any) {
-		let path = file.path;
+	// create, modify, delete, rename
+	async processLocalEvent(action: string, file: TAbstractFile, args: any) {
+		if(action == "rename") {
+			await this.processLocalEvent("delete", {path: args[0]})
+			await this.processLocalEvent("create", file);
+			return;
+		}
+		DEBUG && console.log("event", action, file.path);
 
 		try {
-			let sha1 = await this.getSHA(await this.xCache.read(path));
+			let result = await this.getMetadata(action, file);
+			if(!result.changed)
+				return;
+
+			if (!this.anysocket.isConnected) {
+				return;
+			}
+
+			result.metadata.path = file.path;
 			this.anysocket.broadcast({
 				type: "file_event",
-				data: {
-					type: type,
-					folder: !!file.children,
-					path: path,
-					mtime: file.stat?.mtime,
-					args: args ? args[0] : undefined,
-					sha1: sha1
-				}
+				data: result.metadata
 			});
-		}
-		catch(e) {
+		} catch (e) {
 			console.error(e);
 		}
 	}
 
 	registerEvent(type: any) {
 		this.eventRefs[type] = app.vault.on(type, async (file, ...args) => {
+			if (!this.isEnabled)
+				return;
+
 			await this.processLocalEvent(type, file, args);
 		});
 	}
@@ -125,101 +115,54 @@ export default class XSync {
 		app.vault.offref(this.eventRefs[type])
 	}
 
-	async load(internal) {
-		if(!this.isEnabled)
+	async load() {
+		if (!this.isEnabled)
 			return;
 
-		if(!internal) {
-			console.log("AnySocket Sync ("+ this.plugin.VERSION +") - Enabled");
-		}
+		await this.storage.init();
+		await (async () => {
+			let loaded = 0;
+			let times = 2;
+			return new Promise((resolve) => {
+				let interval = setInterval(() => {
+					let current = app.vault.getAllLoadedFiles();
+					if (loaded < current.length) {
+						loaded = current.length;
+					} else if (loaded == current.length && --times <= 0) {
+						clearInterval(interval);
+						resolve();
+					}
+				}, 500);
+			});
+		})();
 
-		this.anysocketEnabled = true;
-		this.anysocket.removeAllListeners();
-
+		// wait for vault creation before registering to events
 		this.registerEvent("create");
 		this.registerEvent("modify");
 		this.registerEvent("delete");
 		this.registerEvent("rename");
 
-		let password = await this.getSHA(this.anysocket.id.substring(0, 16) +
-			this.plugin.settings.password +
-			this.anysocket.id.substring(16))
+		this.anysocket.on("connected", async () => {
+			new Notice("🟢 AnySocket Sync - Connected");
+			this.plugin.ribbonIcon.style.color = "";
 
-		this.anysocket.authPacket = () => {
-			return password;
-		}
-		this.anysocket.onAuth = async (packet) => {
-			return await this.getSHA(packet.id.substring(0, 16) +
-				this.plugin.settings.password +
-				packet.id.substring(16)) == packet.auth;
-		}
+			await this.sync();
+		});
+		this.anysocket.on("message", this.onMessage.bind(this));
+		this.anysocket.on("reload", this.reload.bind(this));
+		this.anysocket.on("unload", this.unload.bind(this));
+		this.anysocket.on("disconnected", () => {
+			new Notice("🔴 AnySocket Sync - Lost connection");
+			this.plugin.ribbonIcon.style.color = "red";
 
-		this.anysocket.on("message", async (packet: any) => {
-			if(packet.msg.type == "upload") {
-				this.anysocket.broadcast({
-					type: "upload",
-					data: {
-						path: packet.msg.path,
-						file: await this.xCache.read(packet.msg.path),
-						mtime: this.xCache.getFile(packet.msg.path).stat.mtime
-					},
-				});
-			} else if(packet.msg.type == "download") {
-				console.log("recv:", packet.msg.data.path, packet.msg.data.mtime);
-				await this.xCache.write(packet.msg.data.path, packet.msg.data.file, packet.msg.data.mtime);
-			} else if(packet.msg.type == "delete") {
-				await this.xCache.delete(packet.msg.path);
-			} else if(packet.msg.type == "rename") {
-				await this.xCache.rename(packet.msg.data.oldPath, packet.msg.data.newPath);
-			}
+			DEBUG && console.log("disconnected");
 		});
 
-		this.anysocket.on("e2e", async (peer: any) => {
-			this.isAnySocketConnected = true;
-			this.getTime = peer.getSyncedTime.bind(peer);
-			await this.getTime();
-
-			app.workspace.onLayoutReady(async () => {
-				peer.send({
-					type: "version",
-					version: this.plugin.VERSION,
-					build: this.plugin.BUILD
-				}, true).then(async packet => {
-					if(packet.msg.type == "ok") {
-						this.notifyConnectionStatus();
-						await this.sync();
-
-					} else if (packet.msg.type == "update") {
-						const BASE = ".obsidian/plugins/obsidian-anysocket-sync/";
-						for(let item of packet.msg.files) {
-							await app.vault.adapter.write(BASE + item.path, item.data);
-						}
-
-						window._anysocketID = this.anysocket.id;
-						// ignore disconnected message
-						this.anysocket.removeAllListeners("disconnected");
-						app.plugins.disablePlugin("obsidian-anysocket-sync");
-						new Notice("🟡 AnySocket Sync - Updated to version: " + packet.msg.version);
-						app.plugins.enablePlugin("obsidian-anysocket-sync");
-					} else {
-						this.anysocket.removeAllListeners();
-						this.unload(true);
-						new Notice("🟡 AnySocket Sync - Incompatible client version " + this.plugin.VERSION);
-					}
-				});
-			});
-		});
-		this.anysocket.on("disconnected", (peer: any) => {
-			this.isAnySocketConnected = false;
-			this.notifyConnectionStatus();
-			this.reload();
-		});
-
-		this.anysocketConnect();
+		this.anysocket.init();
 	}
 
-	unload(internal) {
-		this.anysocketEnabled = false;
+	unload() {
+		clearTimeout(this.reloadTimeout);
 
 		this.unregisterEvent("create");
 		this.unregisterEvent("modify");
@@ -229,31 +172,81 @@ export default class XSync {
 		this.anysocket.stop();
 
 		this.anysocket.removeAllListeners();
-
-		if(!internal) {
-			console.log("AnySocket Sync ("+ this.plugin.VERSION +") - Disabled");
-		}
 		this.plugin.ribbonIcon.style.color = "red";
 	}
 
 	reload() {
-		this.unload(true);
-		clearTimeout(this.reloadTimeout);
+		DEBUG && console.log("reloaded");
+		this.unload();
 		this.reloadTimeout = setTimeout(() => {
-			this.load(true);
+			this.load();
 		}, 1000);
 	}
 
-	notifyConnectionStatus() {
-		if(this.isAnySocketConnected) {
-			new Notice("🟢 AnySocket Sync - Connected");
-			this.plugin.ribbonIcon.style.color = "";
+	async onMessage(packet: any) {
+		switch (packet.msg.type) {
+			case "file_data":
+				return this.onFileData(packet.peer, packet.msg.data);
 		}
-		else {
-			new Notice("🔴 AnySocket Sync - Lost connection");
-			this.plugin.ribbonIcon.style.color = "red";
+	}
 
-			this.reload();
+	async onFileData(peer, data) {
+		DEBUG && console.log("FileData:", data);
+		if (data.type == "send") {
+			this.anysocket.broadcast({
+				type: "file_data",
+				data: {
+					type: "apply",
+					data: await this.storage.read(data.path),
+					path: data.path,
+					metadata: await this.storage.readMetadata(data.path)
+				}
+			});
 		}
+		else if (data.type == "apply") {
+			switch (data.metadata.action) {
+				case "created":
+					await this.storage.write(data.path, data.data, data.metadata);
+					break;
+				case "deleted":
+					await this.storage.delete(data.path, data.metadata);
+					break;
+			}
+		} else if (data.type == "sync") {
+			DEBUG && console.log("sync", data);
+		}
+	}
+
+	private async getMetadata(action, file, itemTime) {
+		let typeToAction = {
+			"sync": "created",
+			"create": "created",
+			"modify": "created",
+			"rename": "created",
+			"delete": "deleted"
+		}
+		let metadata = {
+			action: typeToAction[action],
+			sha1: await Utils.getSHA(await this.storage.read(file.path)),
+			mtime: itemTime || await this.anysocket.getTime(),
+			type: file.children === undefined ? "file" : "folder"
+		};
+
+		// if the storedMetadata (sha1( is the same as the current one
+		// this means that we just wrote this file, so we skip
+		let storedMetadata = await this.storage.readMetadata(file.path);
+		if(storedMetadata && metadata.action == storedMetadata.action && metadata.sha1 == storedMetadata.sha1) {
+			return {
+				changed: false,
+				metadata: storedMetadata
+			};
+		}
+
+		await this.storage.writeMetadata(file.path, metadata);
+
+		return {
+			changed: true,
+			metadata: metadata
+		};
 	}
 }
