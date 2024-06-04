@@ -20,10 +20,10 @@ export default class AnysocketManager extends EventEmitter {
 		AnySocketLoader.load();
 		this.anysocket = new AnySocket();
 
-		console.log("AnySocket Sync ("+ this.plugin.VERSION +") - Enabled");
+		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
 		// console.log("AnySocket Sync ("+ this.plugin.VERSION +") - Disabled");
 		// TODO: implement this
-		if(app.isMobile) {
+		if (app.isMobile) {
 			activeWindow.onblur = () => {
 				this.emit("unload");
 			};
