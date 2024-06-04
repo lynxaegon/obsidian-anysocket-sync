@@ -119,6 +119,7 @@ export default class AnysocketManager extends EventEmitter {
 			delete window._anysocketID;
 		}
 		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
+			console.log(peer);
 			peer.e2e();
 			this.notifiedOfConnectError = false;
 		}).catch((e) => {
