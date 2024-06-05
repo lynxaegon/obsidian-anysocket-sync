@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-anysocket-sync",
 	"name": "AnySocket Realtime Sync",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Self-Hosted realtime syncronization for you Vault using AnySocket",
 	"author": "Andrei Vaduva",

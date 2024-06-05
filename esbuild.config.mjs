@@ -23,8 +23,19 @@ let developmentPlugin = {
 		const BUILD_DIR = __dirname + "/";
 		const SERVER_DIR = __dirname + "/../obsidian-anysocket-sync-server/client/";
 		build.onEnd(result => {
-			const VERSION = JSON.parse(fs.readFileSync("./manifest.json", "utf-8")).version;
+			const VERSION = JSON.parse(fs.readFileSync("./package.json", "utf-8")).version;
 			const BUILD = Date.now();
+
+			// auto update VERSION from package.json
+			const manifest = JSON.parse(fs.readFileSync("./manifest.json", "utf-8"));
+			manifest.version = VERSION;
+			fs.writeFileSync("./manifest.json", JSON.stringify(manifest, null, "\t"), "utf-8");
+
+			// auto update versions.json with supported versins
+			const supportedVersions = JSON.parse(fs.readFileSync("./versions.json", "utf-8"));
+			supportedVersions[manifest.version] = manifest.minAppVersion;
+			fs.writeFileSync("./versions.json", JSON.stringify(supportedVersions, null, "\t"), "utf-8");
+
 
 			fs.writeFileSync(BUILD_DIR + "main.js", fs.readFileSync(BUILD_DIR + "main.js", "utf-8")
 				.replaceAll("__anysocketsync_version__", "" + VERSION)

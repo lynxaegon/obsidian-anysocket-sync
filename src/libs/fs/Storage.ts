@@ -17,11 +17,6 @@ export default class Storage {
 			return;
 
 		this.tree = {};
-		// this.tree = await this.fsInternal.read("vault_index.json");
-		// if(!this.tree) {
-		// 	this.tree = "{}";
-		// }
-		// this.tree = JSON.parse(this.tree);
 		this.inited = true;
 	}
 
@@ -73,7 +68,6 @@ export default class Storage {
 			this.tree[path][key] = metadata[key];
 		}
 
-		// await this.fsInternal.write("vault_index.json", JSON.stringify(this.tree));
 		return this.tree[path];
 	}
 

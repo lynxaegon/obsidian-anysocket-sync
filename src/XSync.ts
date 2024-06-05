@@ -9,7 +9,6 @@ import Storage from "./libs/fs/Storage";
 
 const DEBUG = true;
 
-// TODO: implement storage tree compaction (both server&client)
 export default class XSync {
 	plugin: Plugin;
 	isEnabled = false;
