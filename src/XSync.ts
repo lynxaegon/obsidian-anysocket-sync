@@ -17,6 +17,7 @@ export default class XSync {
 	anysocket: any;
 	storage: Storage = new Storage();
 	reloadTimeout = null;
+	deviceName: "Unknown";
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
@@ -61,17 +62,19 @@ export default class XSync {
 		DEBUG && console.log("sync");
 		let data = [];
 		await this.storage.iterate(async (item: any) => {
-			let result = await this.getMetadata("sync", item, item.stat.mtime);
+			let mtime = null;
+			if(item.children === undefined) {
+				mtime = item.stat.mtime;
+			}
+			let result = await this.getMetadata("sync", item, mtime);
 			data.push({
 				path: item.path,
 				metadata: result.metadata
 			});
 		});
 
-		this.anysocket.broadcast({
-			type: "sync",
-			data: data
-		});
+
+		await this.anysocket.rpc.onSync(data);
 	}
 
 	// create, modify, delete, rename
@@ -93,10 +96,7 @@ export default class XSync {
 			}
 
 			result.metadata.path = file.path;
-			this.anysocket.broadcast({
-				type: "file_event",
-				data: result.metadata
-			});
+			await this.anysocket.rpc.onFileEvent(result.metadata);
 		} catch (e) {
 			console.error(e);
 		}
@@ -118,6 +118,10 @@ export default class XSync {
 	async load() {
 		if (!this.isEnabled)
 			return;
+
+		if(this.inited == true)
+			return;
+		this.inited = true;
 
 		await this.storage.init();
 		await (async () => {
@@ -142,13 +146,19 @@ export default class XSync {
 		this.registerEvent("delete");
 		this.registerEvent("rename");
 
-		this.anysocket.on("connected", async () => {
+		this.anysocket.on("connected", async (peer) => {
 			new Notice("🟢 AnySocket Sync - Connected");
 			this.plugin.ribbonIcon.style.color = "";
 
+			let syncPlugin = app.internalPlugins.plugins["sync"].instance;
+			let deviceName = syncPlugin.deviceName ? syncPlugin.deviceName : syncPlugin.getDefaultDeviceName();
+
+			await peer.rpc.setDeviceId(deviceName);
 			await this.sync();
 		});
-		this.anysocket.on("message", this.onMessage.bind(this));
+		this.anysocket.anysocket.rpc = {
+			onFileData: this.onFileData.bind(this)
+		}
 		this.anysocket.on("reload", this.reload.bind(this));
 		this.anysocket.on("unload", this.unload.bind(this));
 		this.anysocket.on("disconnected", () => {
@@ -163,6 +173,10 @@ export default class XSync {
 
 	unload() {
 		clearTimeout(this.reloadTimeout);
+
+		if(this.inited == false)
+			return;
+		this.inited = false;
 
 		this.unregisterEvent("create");
 		this.unregisterEvent("modify");
@@ -183,30 +197,23 @@ export default class XSync {
 		}, 1000);
 	}
 
-	async onMessage(packet: any) {
-		switch (packet.msg.type) {
-			case "file_data":
-				return this.onFileData(packet.peer, packet.msg.data);
-		}
-	}
-
-	async onFileData(peer, data) {
+	async onFileData(data, peer) {
 		DEBUG && console.log("FileData:", data);
 		if (data.type == "send") {
-			this.anysocket.broadcast({
-				type: "file_data",
-				data: {
-					type: "apply",
-					data: await this.storage.read(data.path),
-					path: data.path,
-					metadata: await this.storage.readMetadata(data.path)
-				}
+			this.anysocket.rpc.onFileData({
+				type: "apply",
+				data: await this.storage.read(data.path),
+				path: data.path,
+				metadata: await this.storage.readMetadata(data.path)
 			});
-		}
-		else if (data.type == "apply") {
+		} else if (data.type == "apply") {
 			switch (data.metadata.action) {
 				case "created":
-					await this.storage.write(data.path, data.data, data.metadata);
+					if (data.metadata.type == "folder") {
+						await this.storage.makeFolder(data.path, data.metadata);
+					} else {
+						await this.storage.write(data.path, data.data, data.metadata);
+					}
 					break;
 				case "deleted":
 					await this.storage.delete(data.path, data.metadata);
@@ -215,6 +222,7 @@ export default class XSync {
 		} else if (data.type == "sync") {
 			DEBUG && console.log("sync", data);
 		}
+		return true;
 	}
 
 	private async getMetadata(action, file, itemTime) {
@@ -229,7 +237,7 @@ export default class XSync {
 			action: typeToAction[action],
 			sha1: await Utils.getSHA(await this.storage.read(file.path)),
 			mtime: itemTime || await this.anysocket.getTime(),
-			type: file.children === undefined ? "file" : "folder"
+			type: file.stat ? "file" : "folder"
 		};
 
 		// if the storedMetadata (sha1( is the same as the current one

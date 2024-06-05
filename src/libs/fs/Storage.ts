@@ -30,13 +30,16 @@ export default class Storage {
 		return await this.fsVault.write(path, data, metadata.mtime);
 	}
 
+	async makeFolder(path: string, metadata: any) {
+		await this.writeMetadata(path, metadata);
+		return await this.fsVault.makeFolder(path);
+	}
+
 	async read(path: string) {
 		return await this.fsVault.read(path);
 	}
 
 	async delete(path: string, metadata: any) {
-		console.log("deleting", path, "metadata", metadata);
-
 		await this.writeMetadata(path, metadata);
 		return await this.fsVault.delete(path);
 	}

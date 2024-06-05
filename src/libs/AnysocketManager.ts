@@ -3,7 +3,7 @@ import {Notice, Plugin} from "obsidian";
 import AnySocketLoader from "./AnySocketLoader";
 import Utils from "./Utils";
 import XSync from "../XSync";
-const EventEmitter = require('events');
+const EventEmitter = require('./Events');
 
 export default class AnysocketManager extends EventEmitter {
 	plugin: Plugin;
@@ -15,6 +15,8 @@ export default class AnysocketManager extends EventEmitter {
 
 	constructor(xSync: XSync) {
 		super();
+		this.rpc = null;
+
 		this.xSync = xSync;
 		this.plugin = xSync.plugin;
 		AnySocketLoader.load();
@@ -65,10 +67,11 @@ export default class AnysocketManager extends EventEmitter {
 			await this.getTime();
 
 			app.workspace.onLayoutReady(async () => {
-				this.checkForUpdates(peer);
+				await this.checkForUpdates(peer);
 			});
 		});
 		this.anysocket.on("disconnected", (peer: any) => {
+			this.rpc = null;
 			this.emit("disconnected");
 			this.emit("reload");
 		});
@@ -76,29 +79,24 @@ export default class AnysocketManager extends EventEmitter {
 		this.connect();
 	}
 
-	checkForUpdates(peer) {
-		peer.send({
-			type: "version",
-			version: this.plugin.VERSION,
-			build: this.plugin.BUILD
-		}, true).then(async packet => {
-			if(packet.msg.type == "ok") {
-				this.emit("connected");
-			} else if (packet.msg.type == "update") {
-				await this.xSync.storage.updatePlugin(packet.msg.files);
-				window._anysocketID = this.anysocket.id;
-				// ignore disconnected message
-				this.anysocket.removeAllListeners("disconnected");
-				app.plugins.disablePlugin("obsidian-anysocket-sync");
-				new Notice("🟡 AnySocket Sync - Updated to version: " + packet.msg.version);
-				app.plugins.enablePlugin("obsidian-anysocket-sync");
-			} else {
-
-				this.anysocket.removeAllListeners();
-				this.emitthis.emit("unload");
-				new Notice("🟡 AnySocket Sync - Incompatible client version " + this.plugin.VERSION);
-			}
-		});
+	async checkForUpdates(peer) {
+		let result = await peer.rpc.onVersionCheck(this.plugin.VERSION, this.plugin.BUILD);
+		if(result.type == "ok") {
+			this.rpc = peer.rpc;
+			this.emit("connected", peer);
+		} else if (result.type == "update") {
+			await this.xSync.storage.updatePlugin(result.files);
+			window._anysocketID = this.anysocket.id;
+			// ignore disconnected message
+			this.anysocket.removeAllListeners("disconnected");
+			app.plugins.disablePlugin("obsidian-anysocket-sync");
+			new Notice("🟡 AnySocket Sync - Updated to version: " + result.version);
+			app.plugins.enablePlugin("obsidian-anysocket-sync");
+		} else {
+			this.anysocket.removeAllListeners();
+			this.emit("unload");
+			new Notice("🟡 AnySocket Sync - Incompatible client version " + this.plugin.VERSION);
+		}
 	}
 
 	connect() {
@@ -118,9 +116,7 @@ export default class AnysocketManager extends EventEmitter {
 			this.anysocket.id = window._anysocketID;
 			delete window._anysocketID;
 		}
-		console.log("connecting to:", this.plugin.settings.host, this.plugin.settings.port);
 		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
-			console.log(peer);
 			peer.e2e();
 			this.notifiedOfConnectError = false;
 		}).catch((e) => {
@@ -132,10 +128,6 @@ export default class AnysocketManager extends EventEmitter {
 			}
 			this.emit("reload");
 		});
-	}
-
-	broadcast(...args) {
-		this.anysocket.broadcast(...args);
 	}
 
 	stop() {

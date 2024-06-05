@@ -4,13 +4,17 @@ export default class FSAdapter {
 		this.basePath = basePath;
 	}
 
+	async makeFolder(path: string) {
+		await app.vault.createFolder(this.basePath + path).catch(() => {
+			// ignored
+		});
+	}
+
 	async write(path: string, data: any, mtime: any) {
 		if(!await this.exists(path)) {
 			let folder = path.split("/").slice(0, -1).join("/");
 			if(folder) {
-				await app.vault.createFolder(this.basePath + path).catch(() => {
-					// ignored
-				});
+				await this.makeFolder(folder);
 			}
 		}
 		if(data != null) {
@@ -39,7 +43,7 @@ export default class FSAdapter {
 	}
 
 	async delete(path: any) {
-		console.log("ACTUAL DELETE: ", this.getFile(path), await app.vault.delete(this.getFile(path), true));
+		await app.vault.delete(this.getFile(path), true)
 	}
 
 	async iterate(callback) {

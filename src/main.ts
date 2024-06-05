@@ -23,13 +23,19 @@ export default class AnySocketSyncPlugin extends Plugin {
 	settings: AnySocketSyncSettings;
 	xSync: XSync;
 	ribbonIcon: HTMLElement;
+	isLoading = false;
 
 	async onload() {
 		await this.loadSettings();
 
 		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', async (evt: MouseEvent) => {
 			// do nothing
+			if(this.isLoading) {
+				return;
+			}
+			this.isLoading = true;
 			await this.xSync.enabled(!this.xSync.isEnabled);
+			this.isLoading = false;
 		});
 		this.ribbonIcon.style.color = "red";
 
