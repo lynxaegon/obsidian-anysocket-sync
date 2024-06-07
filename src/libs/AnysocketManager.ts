@@ -12,10 +12,10 @@ export default class AnysocketManager extends EventEmitter {
 	anysocket: any;
 	isConnected: boolean = false;
 	notifiedOfConnectError = false;
+	peer = null;
 
 	constructor(xSync: XSync) {
 		super();
-		this.rpc = null;
 
 		this.xSync = xSync;
 		this.plugin = xSync.plugin;
@@ -69,7 +69,7 @@ export default class AnysocketManager extends EventEmitter {
 			});
 		});
 		this.anysocket.on("disconnected", (peer: any) => {
-			this.rpc = null;
+			this.peer = null;
 			this.emit("disconnected");
 			this.emit("reload");
 		});
@@ -80,7 +80,7 @@ export default class AnysocketManager extends EventEmitter {
 	async checkForUpdates(peer) {
 		let result = await peer.rpc.onVersionCheck(this.plugin.VERSION, this.plugin.BUILD);
 		if(result.type == "ok") {
-			this.rpc = peer.rpc;
+			this.peer = peer;
 			this.emit("connected", peer);
 		} else if (result.type == "update") {
 			await this.xSync.storage.updatePlugin(result.files);
@@ -126,6 +126,10 @@ export default class AnysocketManager extends EventEmitter {
 			}
 			this.emit("reload");
 		});
+	}
+
+	async send(packet) {
+		return await this.peer.send(packet);
 	}
 
 	stop() {

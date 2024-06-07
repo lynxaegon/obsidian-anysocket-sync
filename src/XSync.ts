@@ -72,8 +72,10 @@ export default class XSync {
 			});
 		});
 
-
-		await this.anysocket.rpc.onSync(data);
+		this.anysocket.send({
+			type: "sync",
+			data: data
+		});
 	}
 
 	// create, modify, delete, rename
@@ -95,7 +97,10 @@ export default class XSync {
 			}
 
 			result.metadata.path = file.path;
-			await this.anysocket.rpc.onFileEvent(result.metadata);
+			this.anysocket.send({
+				type: "file_event",
+				data: result.metadata
+			});
 		} catch (e) {
 			console.error(e);
 		}
@@ -155,9 +160,14 @@ export default class XSync {
 			await peer.rpc.setDeviceId(deviceName);
 			await this.sync();
 		});
-		this.anysocket.anysocket.rpc = {
-			onFileData: this.onFileData.bind(this)
-		}
+
+		this.anysocket.on("message", (packet) => {
+			switch (packet.msg.type) {
+				case "file_data":
+					this.onFileData(packet.msg.data, packet.peer);
+					break;
+			}
+		});
 		this.anysocket.on("reload", this.reload.bind(this));
 		this.anysocket.on("unload", this.unload.bind(this));
 		this.anysocket.on("disconnected", () => {
@@ -199,11 +209,14 @@ export default class XSync {
 	async onFileData(data, peer) {
 		DEBUG && console.log("FileData:", data);
 		if (data.type == "send") {
-			this.anysocket.rpc.onFileData({
-				type: "apply",
-				data: await this.storage.read(data.path),
-				path: data.path,
-				metadata: await this.storage.readMetadata(data.path)
+			this.anysocket.send({
+				type: "file_data",
+				data: {
+					type: "apply",
+					data: await this.storage.read(data.path),
+					path: data.path,
+					metadata: await this.storage.readMetadata(data.path)
+				}
 			});
 		} else if (data.type == "apply") {
 			switch (data.metadata.action) {
