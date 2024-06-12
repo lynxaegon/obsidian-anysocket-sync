@@ -30,7 +30,7 @@ export default class AnySocketSyncPlugin extends Plugin {
 
 		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', async (evt: MouseEvent) => {
 			// do nothing
-			if(this.isLoading) {
+			if (this.isLoading) {
 				return;
 			}
 			this.isLoading = true;
@@ -72,28 +72,37 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Settings for my awesome plugin.'});
+		containerEl.createEl('h2', {text: 'Settings'});
 
 		new Setting(containerEl)
-			.setName('Server Host')
+			.setName('Host')
 			.addText(text => text
-				.setPlaceholder('host/ip')
+				.setPlaceholder('127.0.0.1')
 				.setValue(this.plugin.settings.host)
 				.onChange(async (value) => {
 					this.plugin.settings.host = value;
-				}))
+				}));
+		new Setting(containerEl)
+			.setName('Port')
 			.addText(text => text
-				.setPlaceholder('port')
+				.setPlaceholder('3000')
 				.setValue(this.plugin.settings.port)
 				.onChange(async (value) => {
 					this.plugin.settings.port = value;
-				}))
-			.addText(text => text
-				.setPlaceholder('pass')
-				.setValue(this.plugin.settings.password)
-				.onChange(async (value) => {
-					this.plugin.settings.password = value;
-				}))
+				}));
+		new Setting(containerEl)
+			.setName('Password')
+			.addText(text => {
+					text
+						.setPlaceholder('pass')
+						.setValue(this.plugin.settings.password)
+						.onChange(async (value) => {
+							this.plugin.settings.password = value;
+						});
+					text.inputEl.type = "password";
+				}
+			)
+		new Setting(containerEl)
 			.addButton((button) =>
 				button.setButtonText("Save").onClick(async () => {
 					await this.plugin.saveSettings();
