@@ -58,7 +58,6 @@ export default class AnysocketManager extends EventEmitter {
 		});
 
 		this.anysocket.on("e2e", async (peer: any) => {
-			this.isConnected = true;
 			this.getTime = async () => {
 				return Math.round((await peer.getSyncedTime()).time);
 			}
@@ -81,6 +80,7 @@ export default class AnysocketManager extends EventEmitter {
 		let result = await peer.rpc.onVersionCheck(this.plugin.VERSION, this.plugin.BUILD);
 		if(result.type == "ok") {
 			this.peer = peer;
+			this.isConnected = true;
 			this.emit("connected", peer);
 		} else if (result.type == "update") {
 			await this.xSync.storage.updatePlugin(result.files);
