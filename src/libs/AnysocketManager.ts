@@ -88,9 +88,9 @@ export default class AnysocketManager extends EventEmitter {
 			window._anysocketID = this.anysocket.id;
 			// ignore disconnected message
 			this.anysocket.removeAllListeners("disconnected");
-			app.plugins.disablePlugin("obsidian-anysocket-sync");
+			app.plugins.disablePlugin("anysocket-sync");
 			new Notice("🟡 AnySocket Sync - Updated to version: " + result.version);
-			app.plugins.enablePlugin("obsidian-anysocket-sync");
+			app.plugins.enablePlugin("anysocket-sync");
 		} else {
 			this.anysocket.removeAllListeners();
 			this.emit("unload");

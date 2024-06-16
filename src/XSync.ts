@@ -10,6 +10,7 @@ import { inspect } from "util";
 
 const DEBUG = true;
 
+
 export default class XSync {
 	plugin: Plugin;
 	isEnabled = false;

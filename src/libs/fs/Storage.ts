@@ -9,7 +9,7 @@ export default class Storage {
 
 	constructor() {
 		this.fsVault = new FSAdapter("./");
-		this.fsInternal = new FSAdapter(".obsidian/plugins/obsidian-anysocket-sync/");
+		this.fsInternal = new FSAdapter(".obsidian/plugins/anysocket-sync/");
 	}
 
 	async init() {
