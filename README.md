@@ -28,6 +28,6 @@ _Important: **Always backup your vault!**_
 4. Go to settings and update the host/port/password
    
 ## Screenshots
-![Commands](https://github.com/lynxaegon/obsidian-anysocket-sync/raw/master/screenshots/info_1.png)
+![Commands](https://github.com/lynxaegon/obsidian-anysocket-sync/raw/main/screenshots/info_1.png)
 
-![Version History](https://github.com/lynxaegon/obsidian-anysocket-sync/raw/master/screenshots/info_2.png)
+![Version History](https://github.com/lynxaegon/obsidian-anysocket-sync/raw/main/screenshots/info_2.png)
