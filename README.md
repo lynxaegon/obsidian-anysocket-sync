@@ -35,3 +35,8 @@ _Important: **Always backup your vault!**_
 ![Commands](https://github.com/lynxaegon/obsidian-anysocket-sync/raw/master/screenshots/info_1.png)
 
 ![Version History](https://github.com/lynxaegon/obsidian-anysocket-sync/raw/master/screenshots/info_2.png)
+
+
+## License
+
+MIT
