@@ -68,6 +68,7 @@ export default class AnysocketManager extends EventEmitter {
 			});
 		});
 		this.anysocket.on("disconnected", (peer: any) => {
+			this.isConnected = false;
 			this.peer = null;
 			this.emit("disconnected");
 			this.emit("reload");
@@ -122,14 +123,23 @@ export default class AnysocketManager extends EventEmitter {
 			this.isConnected = false;
 			if(!this.notifiedOfConnectError) {
 				this.notifiedOfConnectError = true;
-				new Notice("🟡 AnySocket Sync - Could not connect to the server");
+				new Notice("🟡 AnySocket Sync - Could not connect to the server", );
 			}
 			this.emit("reload");
 		});
 	}
 
-	async send(packet) {
-		return await this.peer.send(packet);
+	async send(packet, onReply) {
+		if(!this.peer)
+			return;
+
+		if(onReply) {
+			packet = await this.peer.send(packet, true);
+			onReply(packet);
+		}
+		else {
+			return await this.peer.send(packet);
+		}
 	}
 
 	stop() {

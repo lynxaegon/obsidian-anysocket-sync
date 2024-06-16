@@ -4,6 +4,8 @@ import {
 	Setting
 } from 'obsidian';
 import XSync from './XSync';
+import {RibbonModal} from "./libs/modals/RibbonModal";
+import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
 
 interface AnySocketSyncSettings {
 	host: string;
@@ -28,14 +30,24 @@ export default class AnySocketSyncPlugin extends Plugin {
 	async onload() {
 		await this.loadSettings();
 
-		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', async (evt: MouseEvent) => {
-			// do nothing
-			if (this.isLoading) {
+		this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
+			// @ts-ignore
+			// if folder, return
+			if(!file.stat) {
 				return;
 			}
-			this.isLoading = true;
-			await this.xSync.enabled(!this.xSync.isEnabled);
-			this.isLoading = false;
+			menu.addItem((item) => {
+				item
+					.setTitle("Version History")
+					.setIcon("history")
+					.onClick(async () => {
+						new VersionHistoryModal(this, file.path);
+					});
+			});
+		}));
+
+		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', async (evt: MouseEvent) => {
+			(new RibbonModal(this)).open();
 		});
 		this.ribbonIcon.style.color = "red";
 
@@ -44,6 +56,8 @@ export default class AnySocketSyncPlugin extends Plugin {
 
 		this.xSync = new XSync(this);
 		await this.xSync.enabled(true);
+
+
 	}
 
 	async onunload() {

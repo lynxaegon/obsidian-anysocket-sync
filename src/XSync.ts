@@ -57,12 +57,73 @@ export default class XSync {
 		}
 	}
 
+	async listVersionHistory(path, callback) {
+		if (!this.isEnabled) {
+			return new Notice("🟡 AnySocket Sync - Plugin is disabled");
+		}
+
+		if (!this.anysocket.isConnected) {
+			return new Notice("🟡 AnySocket Sync - Not Connected");
+		}
+
+		this.anysocket.send({
+			type: "file_history",
+			data: {
+				type: "list_versions",
+				path: path,
+			}
+		}, (packet) => {
+			callback(packet.msg);
+		});
+	}
+
+	async readVersionHistory(path, timestamp, callback) {
+		if (!this.isEnabled) {
+			return new Notice("🟡 AnySocket Sync - Plugin is disabled");
+		}
+
+		if (!this.anysocket.isConnected) {
+			return new Notice("🟡 AnySocket Sync - Not Connected");
+		}
+
+		this.anysocket.send({
+			type: "file_history",
+			data: {
+				type: "read",
+				path: path,
+				timestamp: timestamp
+			}
+		}, (packet) => {
+			callback(packet.msg);
+		});
+	}
+
+	async listFilesHistory(deletedOnly, callback) {
+		if (!this.isEnabled) {
+			return new Notice("🟡 AnySocket Sync - Plugin is disabled");
+		}
+
+		if (!this.anysocket.isConnected) {
+			return new Notice("🟡 AnySocket Sync - Not Connected");
+		}
+
+		this.anysocket.send({
+			type: "file_history",
+			data: {
+				type: "list_files",
+				mode: deletedOnly ? "deleted": "all"
+			}
+		}, (packet) => {
+			callback(packet.msg);
+		});
+	}
+
 	async sync() {
 		DEBUG && console.log("sync");
 		let data = [];
 		await this.storage.iterate(async (item: any) => {
 			let mtime = null;
-			if(item.children === undefined) {
+			if (item.children === undefined) {
 				mtime = item.stat.mtime;
 			}
 			let result = await this.getMetadata("sync", item, mtime);
@@ -80,7 +141,7 @@ export default class XSync {
 
 	// create, modify, delete, rename
 	async processLocalEvent(action: string, file: TAbstractFile, args: any) {
-		if(action == "rename") {
+		if (action == "rename") {
 			await this.processLocalEvent("delete", {path: args[0]})
 			await this.processLocalEvent("create", file);
 			return;
@@ -89,7 +150,7 @@ export default class XSync {
 
 		try {
 			let result = await this.getMetadata(action, file);
-			if(!result.changed)
+			if (!result.changed)
 				return;
 
 			if (!this.anysocket.isConnected) {
@@ -123,7 +184,7 @@ export default class XSync {
 		if (!this.isEnabled)
 			return;
 
-		if(this.inited == true)
+		if (this.inited == true)
 			return;
 		this.inited = true;
 
@@ -183,7 +244,7 @@ export default class XSync {
 	unload() {
 		clearTimeout(this.reloadTimeout);
 
-		if(this.inited == false)
+		if (this.inited == false)
 			return;
 		this.inited = false;
 
@@ -237,25 +298,41 @@ export default class XSync {
 		return true;
 	}
 
-	private async getMetadata(action, file, itemTime) {
+	async getMetadata(action, file, itemTime) {
 		let typeToAction = {
 			"sync": "created",
+			"restore": "created",
 			"create": "created",
 			"modify": "created",
 			"rename": "created",
 			"delete": "deleted"
 		}
+
+		let itemType;
+		let itemData;
+		if (action == "restore") {
+			itemData = file;
+			itemType = "file";
+		} else {
+			itemData = await this.storage.read(file.path);
+			itemType = file.stat ? "file" : "folder";
+		}
+
 		let metadata = {
 			action: typeToAction[action],
-			sha1: await Utils.getSHA(await this.storage.read(file.path)),
+			sha1: await Utils.getSHA(itemData),
 			mtime: itemTime || await this.anysocket.getTime(),
-			type: file.stat ? "file" : "folder"
+			type: itemType
 		};
 
-		// if the storedMetadata (sha1( is the same as the current one
+		if(action == "restore") {
+			return metadata;
+		}
+
+		// if the storedMetadata (sha1) is the same as the current one
 		// this means that we just wrote this file, so we skip
 		let storedMetadata = await this.storage.readMetadata(file.path);
-		if(storedMetadata && metadata.action == storedMetadata.action && metadata.sha1 == storedMetadata.sha1) {
+		if (storedMetadata && metadata.action == storedMetadata.action && metadata.sha1 == storedMetadata.sha1) {
 			return {
 				changed: false,
 				metadata: storedMetadata

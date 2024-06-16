@@ -76,4 +76,11 @@ export default class Storage {
 			await this.fsInternal.write(item.path, item.data);
 		}
 	}
+
+	getFileByPath(path) {
+		if(path.substring(0, 1) == "/") {
+			path = path.substring(1);
+		}
+		return this.fsVault.getFile(path);
+	}
 }
