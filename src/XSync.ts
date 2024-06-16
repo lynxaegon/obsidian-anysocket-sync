@@ -6,6 +6,7 @@ import {
 import AnysocketManager from "./libs/AnysocketManager";
 import Utils from "./libs/Utils";
 import Storage from "./libs/fs/Storage";
+import { inspect } from "util";
 
 const DEBUG = true;
 
@@ -126,6 +127,14 @@ export default class XSync {
 			if (item.children === undefined) {
 				mtime = item.stat.mtime;
 			}
+			else {
+				mtime = await this.getFolderMtime(item);
+				// skip empty folders
+				if(mtime === false) {
+					return;
+				}
+			}
+
 			let result = await this.getMetadata("sync", item, mtime);
 			data.push({
 				path: item.path,
@@ -345,5 +354,31 @@ export default class XSync {
 			changed: true,
 			metadata: metadata
 		};
+	}
+
+	async getFolderMtime(file) {
+		if(file.stat) {
+			return file.stat.mtime;
+		}
+
+		if(file.children.length <= 0) {
+			return false;
+		}
+
+		let hasValue = false;
+		let minMtime = await this.anysocket.getTime();
+		for(let child of file.children) {
+			let mtime = await this.getFolderMtime(child);
+			if(mtime == false) {
+				continue;
+			}
+
+			if(minMtime > mtime) {
+				hasValue = true;
+				minMtime = mtime;
+			}
+		}
+
+		return hasValue ? minMtime : false;
 	}
 }
