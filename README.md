@@ -1,4 +1,4 @@
-<h1 align="center">Obsidian <img src="https://github.com/lynxaegon/obsidian-anysocket-sync/raw/master/icon.svg">AnySocket Sync</h1>
+<h1 align="center">Obsidian <img src="https://github.com/lynxaegon/obsidian-anysocket-sync/raw/main/icon.svg">AnySocket Sync</h1>
 <p align="center">Synchronize your vault on a self-hosted server.</p>
 <p align="center">Built with: <a href="https://github.com/lynxaegon/anysocket">anysocket</a></p>
 
