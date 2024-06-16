@@ -14,12 +14,14 @@
 
 Coming soon:
 * Version History / Deleted files - **mobile visual fix**
+* Don't lose history on rename
 * 2FA for allowing other devices (increased protection)
 * Plugins sync
 
 Known issues:
 - some files (.xlsx) don't seem to sync correctly
 - on mobile, the version history and deleted files panels are not displayed fully
+- History is lost on rename (WIP)
 
 _if you find others, please <a href="https://github.com/lynxaegon/obsidian-anysocket-sync/issues/new"> create an issue</a>_
 
