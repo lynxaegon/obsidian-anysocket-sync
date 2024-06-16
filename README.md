@@ -4,7 +4,7 @@
 
 <a name="features"></a>
 ## Features
-* E2E encrypted
+* Instant E2E encrypted Sync
 * Connect as many devices as you like
 * Sync all types of files across any device (works on mobile)
 * Version History (customizable)
