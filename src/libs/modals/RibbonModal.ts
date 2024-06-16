@@ -74,7 +74,7 @@ export class RibbonModal extends SuggestModal<Command> {
 			case COMMAND_TYPES.SETTINGS:
 				const setting = (this.app as any).setting;
 				await setting.open()
-				setting.openTabById("obsidian-anysocket-sync");
+				setting.openTabById("anysocket-sync");
 				break;
 			case COMMAND_TYPES.VERSION_HISTORY:
 				new FilesHistoryModal(this.plugin, false);
