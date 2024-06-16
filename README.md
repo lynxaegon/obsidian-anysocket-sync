@@ -26,7 +26,7 @@ _if you find others, please <a href="https://github.com/lynxaegon/obsidian-anyso
 ## Installation
 _Important: **Always backup your vault!**_
 1. First install & configure the <a href="https://github.com/lynxaegon/obsidian-anysocket-sync-server">server</a>
-2. Now install the plugin in Obsidian (Community Plugins -> **anysocket-sync**)
+2. Now install the plugin in Obsidian (Community Plugins -> `anysocket-sync`)
 3. Enable the plugin
 4. Go to settings and update the host/port/password
 5. Enjoy!
