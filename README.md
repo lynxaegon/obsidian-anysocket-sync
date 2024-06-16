@@ -1,5 +1,5 @@
 <h1 align="center">Obsidian <img src="https://github.com/lynxaegon/obsidian-anysocket-sync/raw/master/icon.svg">AnySocket Sync</h1>
-<p align="center">Securely synchronize your Vault on a self-hosted server</p>
+<p align="center">Securely synchronize your Vault on a <a href="https://github.com/lynxaegon/obsidian-anysocket-sync-server">self-hosted server</a></p>
 <p align="center">Built with: <a href="https://github.com/lynxaegon/anysocket">anysocket</a></p>
 
 <a name="features"></a>
