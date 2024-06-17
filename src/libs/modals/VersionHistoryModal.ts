@@ -92,7 +92,7 @@ export class VersionHistoryModal extends Modal {
 		item.el.addClass("active");
 
 		this.plugin.xSync.readVersionHistory(this.path, item.timestamp, (data: any) => {
-			if(!(data instanceof String)) {
+			if(typeof data !== "string") {
 				data = "";
 			}
 			this.markdownView.set(data, true);
