@@ -72,7 +72,8 @@ export class RibbonModal extends SuggestModal<Command> {
 	async onChooseSuggestion(item: Command, evt: MouseEvent | KeyboardEvent) {
 		switch (item.id) {
 			case COMMAND_TYPES.SETTINGS:
-				const setting = (this.app as any).setting;
+				// @ts-ignore
+				const setting = this.app.setting;
 				await setting.open()
 				setting.openTabById("anysocket-sync");
 				break;

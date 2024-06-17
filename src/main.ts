@@ -11,12 +11,14 @@ interface AnySocketSyncSettings {
 	host: string;
 	port: string;
 	password: string;
+	debug: boolean;
 }
 
 const DEFAULT_SETTINGS: AnySocketSyncSettings = {
 	host: '127.0.0.1',
 	port: "3000",
-	password: ""
+	password: "",
+	debug: false
 }
 
 export default class AnySocketSyncPlugin extends Plugin {
@@ -49,7 +51,8 @@ export default class AnySocketSyncPlugin extends Plugin {
 		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', async (evt: MouseEvent) => {
 			(new RibbonModal(this)).open();
 		});
-		this.ribbonIcon.style.color = "red";
+		this.ribbonIcon.addClass("anysocket-ribbon-icon");
+		this.ribbonIcon.addClass("offline");
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new AnySocketSyncSettingTab(this));
@@ -122,6 +125,20 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 					this.plugin.xSync.reload();
 				})
+			);
+
+		containerEl.createEl('h2', {text: 'Developer Settings'});
+
+		new Setting(containerEl)
+			.setName('Debug Mode')
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.debug)
+					.onChange(async (value) => {
+						this.plugin.settings.debug = value;
+						await this.plugin.saveSettings();
+						this.plugin.xSync.reload();
+					})
 			);
 	}
 }

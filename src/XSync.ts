@@ -8,9 +8,6 @@ import Utils from "./libs/Utils";
 import Storage from "./libs/fs/Storage";
 import { inspect } from "util";
 
-const DEBUG = true;
-
-
 export default class XSync {
 	plugin: Plugin;
 	isEnabled = false;
@@ -121,7 +118,7 @@ export default class XSync {
 	}
 
 	async sync() {
-		DEBUG && console.log("sync");
+		this.debug && console.log("sync");
 		let data = [];
 		await this.storage.iterate(async (item: any) => {
 			let mtime = null;
@@ -156,7 +153,7 @@ export default class XSync {
 			await this.processLocalEvent("create", file);
 			return;
 		}
-		DEBUG && console.log("event", action, file.path);
+		this.debug && console.log("event", action, file.path);
 
 		try {
 			let result = await this.getMetadata(action, file);
@@ -198,6 +195,7 @@ export default class XSync {
 			return;
 		this.inited = true;
 
+		this.debug = this.plugin.settings.debug;
 		await this.storage.init();
 		await (async () => {
 			let loaded = 0;
@@ -223,7 +221,7 @@ export default class XSync {
 
 		this.anysocket.on("connected", async (peer) => {
 			new Notice("🟢 AnySocket Sync - Connected");
-			this.plugin.ribbonIcon.style.color = "";
+			this.plugin.ribbonIcon.removeClass("offline");
 
 			let syncPlugin = app.internalPlugins.plugins["sync"].instance;
 			let deviceName = syncPlugin.deviceName ? syncPlugin.deviceName : syncPlugin.getDefaultDeviceName();
@@ -243,9 +241,9 @@ export default class XSync {
 		this.anysocket.on("unload", this.unload.bind(this));
 		this.anysocket.on("disconnected", () => {
 			new Notice("🔴 AnySocket Sync - Lost connection");
-			this.plugin.ribbonIcon.style.color = "red";
+			this.plugin.ribbonIcon.addClass("offline");
 
-			DEBUG && console.log("disconnected");
+			this.debug && console.log("disconnected");
 		});
 
 		this.anysocket.init();
@@ -266,11 +264,11 @@ export default class XSync {
 		this.anysocket.stop();
 
 		this.anysocket.removeAllListeners();
-		this.plugin.ribbonIcon.style.color = "red";
+		this.plugin.ribbonIcon.addClass("offline");
 	}
 
 	reload() {
-		DEBUG && console.log("reloaded");
+		this.debug && console.log("reloaded");
 		this.unload();
 		this.reloadTimeout = setTimeout(() => {
 			this.load();
@@ -278,7 +276,7 @@ export default class XSync {
 	}
 
 	async onFileData(data, peer) {
-		DEBUG && console.log("FileData:", data);
+		this.debug && console.log("FileData:", data);
 		if (data.type == "send") {
 			this.anysocket.send({
 				type: "file_data",
@@ -303,7 +301,7 @@ export default class XSync {
 					break;
 			}
 		} else if (data.type == "sync") {
-			DEBUG && console.log("sync", data);
+			this.debug && console.log("sync", data);
 		}
 		return true;
 	}

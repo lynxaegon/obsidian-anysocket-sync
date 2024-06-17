@@ -43,7 +43,7 @@ export default class FSAdapter {
 	}
 
 	async delete(path: any) {
-		await app.vault.delete(this.getFile(path), true)
+		await app.fileManager.trashFile(this.getFile(path));
 	}
 
 	async iterate(callback) {

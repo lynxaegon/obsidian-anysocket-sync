@@ -60,7 +60,6 @@ let developmentPlugin = {
 			fs.copyFileSync(BUILD_DIR + "main.js", LOCAL_DIR + "main.js");
 			fs.copyFileSync(BUILD_DIR + "styles.css", LOCAL_DIR + "styles.css");
 			fs.copyFileSync(BUILD_DIR + "manifest.json", LOCAL_DIR + "manifest.json");
-			fs.copyFileSync(LOCAL_DIR + "build_info.json", LOCAL_DIR + "build_info.json");
 		});
 	},
 }
