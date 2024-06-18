@@ -9,8 +9,8 @@ export default class Storage {
 	private inited = false;
 
 	constructor(plugin) {
-		this.fsVault = new FSAdapter(normalizePath("./"));
-		this.fsInternal = new FSAdapter(plugin.manifest.dir);
+		this.fsVault = new FSAdapter(normalizePath("/"));
+		this.fsInternal = new FSAdapter(plugin.manifest.dir + "/");
 	}
 
 	async init() {

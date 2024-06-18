@@ -1,4 +1,5 @@
 import {
+	Platform,
 	Plugin,
 	PluginSettingTab,
 	Setting
@@ -7,6 +8,7 @@ import XSync from './XSync';
 import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
 import {hostname} from "os";
 import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";
+const UAParser = require("ua-parser-js");
 
 interface AnySocketSyncSettings {
 	host: string;
@@ -17,8 +19,10 @@ interface AnySocketSyncSettings {
 	debug: boolean;
 }
 
+let deviceInfo = (new UAParser(navigator.userAgent)).getDevice();
+
 function getDefaultDeviceName() {
-	return hostname() || "Unknown"
+	return Platform.isDesktop ? hostname() : deviceInfo.model || "Unknown";
 }
 
 const DEFAULT_SETTINGS: AnySocketSyncSettings = {
