@@ -4,21 +4,30 @@ import {
 	Setting
 } from 'obsidian';
 import XSync from './XSync';
-import {RibbonModal} from "./libs/modals/RibbonModal";
 import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
+import {hostname} from "os";
+import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";
 
 interface AnySocketSyncSettings {
 	host: string;
 	port: string;
 	password: string;
+	syncEnabled: boolean;
+	deviceName: string;
 	debug: boolean;
+}
+
+function getDefaultDeviceName() {
+	return hostname() || "Unknown"
 }
 
 const DEFAULT_SETTINGS: AnySocketSyncSettings = {
 	host: '127.0.0.1',
 	port: "3000",
 	password: "",
-	debug: false
+	syncEnabled: false,
+	deviceName: getDefaultDeviceName(),
+	debug: false,
 }
 
 export default class AnySocketSyncPlugin extends Plugin {
@@ -40,17 +49,40 @@ export default class AnySocketSyncPlugin extends Plugin {
 			}
 			menu.addItem((item) => {
 				item
-					.setTitle("Version History")
+					.setTitle("Version history")
 					.setIcon("history")
 					.onClick(async () => {
 						new VersionHistoryModal(this, file.path);
 					});
 			});
+			menu.addItem((item) => {
+				item
+					.setTitle("Deleted files history")
+					.setIcon("history")
+					.onClick(async () => {
+						new FilesHistoryModal(this, true);
+					});
+			});
 		}));
 
-		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', async (evt: MouseEvent) => {
-			(new RibbonModal(this)).open();
+		this.addCommand({
+			id: "anysocket-sync-command-files-version-history",
+			name: "Version history",
+			callback: async () => {
+				new FilesHistoryModal(this, false);
+			}
 		});
+
+		this.addCommand({
+			id: "anysocket-sync-command-deleted-files-version-history",
+			name: "Deleted files history",
+			callback: async () => {
+				new FilesHistoryModal(this, true);
+			}
+		});
+
+
+		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', () => {});
 		this.ribbonIcon.addClass("anysocket-ribbon-icon");
 		this.ribbonIcon.addClass("offline");
 
@@ -59,8 +91,6 @@ export default class AnySocketSyncPlugin extends Plugin {
 
 		this.xSync = new XSync(this);
 		await this.xSync.enabled(true);
-
-
 	}
 
 	async onunload() {
@@ -73,6 +103,7 @@ export default class AnySocketSyncPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		this.xSync.reload();
 	}
 }
 
@@ -86,11 +117,20 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 
 	display(): void {
 		const {containerEl} = this;
-
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Settings'});
-
+		new Setting(containerEl)
+			.setName('Device name')
+			.addText(text => text
+				.setPlaceholder(getDefaultDeviceName())
+				.setValue(this.plugin.settings.deviceName)
+				.onChange(async (value) => {
+					if(value == "") {
+						value = getDefaultDeviceName();
+					}
+					this.plugin.settings.deviceName = value;
+					await this.plugin.saveSettings();
+				}));
 		new Setting(containerEl)
 			.setName('Host')
 			.addText(text => text
@@ -98,6 +138,7 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.host)
 				.onChange(async (value) => {
 					this.plugin.settings.host = value;
+					await this.plugin.saveSettings();
 				}));
 		new Setting(containerEl)
 			.setName('Port')
@@ -106,6 +147,7 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.port)
 				.onChange(async (value) => {
 					this.plugin.settings.port = value;
+					await this.plugin.saveSettings();
 				}));
 		new Setting(containerEl)
 			.setName('Password')
@@ -115,29 +157,30 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 						.setValue(this.plugin.settings.password)
 						.onChange(async (value) => {
 							this.plugin.settings.password = value;
+							await this.plugin.saveSettings();
 						});
 					text.inputEl.type = "password";
 				}
-			)
-		new Setting(containerEl)
-			.addButton((button) =>
-				button.setButtonText("Save").onClick(async () => {
-					await this.plugin.saveSettings();
-					this.plugin.xSync.reload();
-				})
 			);
-
-		containerEl.createEl('h2', {text: 'Developer Settings'});
+		new Setting(containerEl)
+			.setName('Sync')
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.syncEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.syncEnabled = value;
+						await this.plugin.saveSettings();
+					});
+			});
 
 		new Setting(containerEl)
-			.setName('Debug Mode')
+			.setName('Debug')
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.debug)
 					.onChange(async (value) => {
 						this.plugin.settings.debug = value;
 						await this.plugin.saveSettings();
-						this.plugin.xSync.reload();
 					})
 			);
 	}

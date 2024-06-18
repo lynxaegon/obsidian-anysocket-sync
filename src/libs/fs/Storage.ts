@@ -1,5 +1,6 @@
 // @ts-nocheck
 import FSAdapter from "./FSAdapter";
+import {normalizePath} from "obsidian";
 
 export default class Storage {
 	static tree: any = null;
@@ -7,9 +8,9 @@ export default class Storage {
 	fsInternal: FSAdapter;
 	private inited = false;
 
-	constructor() {
-		this.fsVault = new FSAdapter("./");
-		this.fsInternal = new FSAdapter(app.vault.configDir + "/plugins/anysocket-sync/");
+	constructor(plugin) {
+		this.fsVault = new FSAdapter(normalizePath("./"));
+		this.fsInternal = new FSAdapter(plugin.manifest.dir);
 	}
 
 	async init() {

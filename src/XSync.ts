@@ -13,13 +13,13 @@ export default class XSync {
 	isEnabled = false;
 	eventRefs: any = {};
 	anysocket: any;
-	storage: Storage = new Storage();
+	storage: Storage;
 	reloadTimeout = null;
-	deviceName: "Unknown";
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
 		this.anysocket = new AnysocketManager(this);
+		this.storage = new Storage(plugin);
 
 		/* realtime CRDT sync
 		this.plugin.registerEditorExtension(
@@ -47,7 +47,6 @@ export default class XSync {
 	async enabled(value) {
 		if (this.isEnabled !== value) {
 			this.isEnabled = value;
-			this.anysocket.isEnabled = value;
 			if (this.isEnabled) {
 				await this.load(false);
 			} else {
@@ -195,7 +194,9 @@ export default class XSync {
 			return;
 		this.inited = true;
 
+		this.anysocket.isEnabled = this.plugin.settings.syncEnabled;
 		this.debug = this.plugin.settings.debug;
+
 		await this.storage.init();
 		await (async () => {
 			let loaded = 0;
@@ -223,10 +224,10 @@ export default class XSync {
 			new Notice("🟢 AnySocket Sync - Connected");
 			this.plugin.ribbonIcon.removeClass("offline");
 
-			let syncPlugin = app.internalPlugins.plugins["sync"].instance;
-			let deviceName = syncPlugin.deviceName ? syncPlugin.deviceName : syncPlugin.getDefaultDeviceName();
-
-			await peer.rpc.setDeviceId(deviceName);
+			let deviceName = this.plugin.settings.deviceName || null;
+			if(deviceName != null && deviceName != "Unknown") {
+				await peer.rpc.setDeviceId(deviceName);
+			}
 			await this.sync();
 		});
 

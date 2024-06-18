@@ -1,9 +1,9 @@
 // @ts-nocheck
 import {Notice, Plugin} from "obsidian";
-import AnySocketLoader from "./AnySocketLoader";
 import Utils from "./Utils";
 import XSync from "../XSync";
 const EventEmitter = require('./Events');
+const AnySocket = require("anysocket");
 
 export default class AnysocketManager extends EventEmitter {
 	plugin: Plugin;
@@ -19,7 +19,6 @@ export default class AnysocketManager extends EventEmitter {
 
 		this.xSync = xSync;
 		this.plugin = xSync.plugin;
-		AnySocketLoader.load();
 		this.anysocket = new AnySocket();
 
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
