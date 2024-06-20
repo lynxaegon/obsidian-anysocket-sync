@@ -118,7 +118,10 @@ export class VersionHistoryModal extends Modal {
 		let data = this.markdownView.get();
 		let metadata = await this.plugin.xSync.getMetadata(
 			"restore",
-			data
+			{
+				path: this.path,
+				data: data
+			}
 		);
 		// force an update
 		metadata.sha1 = null;

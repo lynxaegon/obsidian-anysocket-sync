@@ -7,6 +7,7 @@ import AnysocketManager from "./libs/AnysocketManager";
 import Utils from "./libs/Utils";
 import Storage from "./libs/fs/Storage";
 import { inspect } from "util";
+import AnySocket from "anysocket/src/libs/AnySocket";
 
 export default class XSync {
 	plugin: Plugin;
@@ -88,6 +89,7 @@ export default class XSync {
 			type: "file_history",
 			data: {
 				type: "read",
+				binary: Utils.isBinary(path),
 				path: path,
 				timestamp: timestamp
 			}
@@ -278,12 +280,17 @@ export default class XSync {
 
 	async onFileData(data, peer) {
 		this.debug && console.log("FileData:", data);
+
 		if (data.type == "send") {
+			let isBinary = Utils.isBinary(data.path);
 			this.anysocket.send({
 				type: "file_data",
 				data: {
 					type: "apply",
-					data: await this.storage.read(data.path),
+					binary: isBinary,
+					data: isBinary ?
+						AnySocket.Packer.pack(await this.storage.readBinary(data.path)) :
+						await this.storage.read(data.path),
 					path: data.path,
 					metadata: await this.storage.readMetadata(data.path)
 				}
@@ -294,20 +301,25 @@ export default class XSync {
 					if (data.metadata.type == "folder") {
 						await this.storage.makeFolder(data.path, data.metadata);
 					} else {
-						await this.storage.write(data.path, data.data, data.metadata);
+						if(data.binary) {
+							await this.storage.writeBinary(data.path, AnySocket.Packer.unpack(data.data), data.metadata);
+						}
+						else {
+							await this.storage.write(data.path, data.data, data.metadata);
+						}
 					}
 					break;
 				case "deleted":
 					await this.storage.delete(data.path, data.metadata);
 					break;
 			}
-		} else if (data.type == "sync") {
-			this.debug && console.log("sync", data);
 		}
 		return true;
 	}
 
 	async getMetadata(action, file, itemTime) {
+		let isBinary = Utils.isBinary(file.path);
+
 		let typeToAction = {
 			"sync": "created",
 			"restore": "created",
@@ -320,16 +332,18 @@ export default class XSync {
 		let itemType;
 		let itemData;
 		if (action == "restore") {
-			itemData = file;
+			itemData = file.data;
 			itemType = "file";
 		} else {
-			itemData = await this.storage.read(file.path);
+			itemData = isBinary ? await this.storage.readBinary(file.path) : await this.storage.read(file.path);
 			itemType = file.stat ? "file" : "folder";
 		}
 
 		let metadata = {
 			action: typeToAction[action],
-			sha1: await Utils.getSHA(itemData),
+			sha1: isBinary ?
+				await Utils.getSHABinary(itemData) :
+				await Utils.getSHA(itemData),
 			mtime: itemTime || await this.anysocket.getTime(),
 			type: itemType
 		};

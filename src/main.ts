@@ -8,6 +8,7 @@ import XSync from './XSync';
 import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
 import {hostname} from "os";
 import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";
+import Utils from "./libs/Utils";
 const UAParser = require("ua-parser-js");
 
 interface AnySocketSyncSettings {
@@ -48,17 +49,21 @@ export default class AnySocketSyncPlugin extends Plugin {
 		this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
 			// @ts-ignore
 			// if folder, return
+
 			if(!file.stat) {
 				return;
 			}
-			menu.addItem((item) => {
-				item
-					.setTitle("Version history")
-					.setIcon("history")
-					.onClick(async () => {
-						new VersionHistoryModal(this, file.path);
-					});
-			});
+
+			if(!Utils.isBinary(file.path)) {
+				menu.addItem((item) => {
+					item
+						.setTitle("Version history")
+						.setIcon("history")
+						.onClick(async () => {
+							new VersionHistoryModal(this, file.path);
+						});
+				});
+			}
 			menu.addItem((item) => {
 				item
 					.setTitle("Deleted files history")

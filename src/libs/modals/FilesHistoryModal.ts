@@ -1,7 +1,9 @@
 //@ts-nocheck
-import {SuggestModal} from "obsidian";
+import {Notice, SuggestModal} from "obsidian";
 import AnySocketSyncPlugin from "../../main";
 import {VersionHistoryModal} from "./VersionHistoryModal";
+import Utils from "../Utils";
+import AnySocket from "anysocket/src/libs/AnySocket";
 
 interface DeletedFile {
 	path: string;
@@ -37,7 +39,30 @@ export class FilesHistoryModal extends SuggestModal<DeletedFile> {
 	}
 
 	async onChooseSuggestion(item: DeletedFile, evt: MouseEvent | KeyboardEvent) {
-		new VersionHistoryModal(this.plugin, item.path);
+		if(Utils.isBinary(item.path)) {
+			let parts = item.path.split("/");
+
+			await this.plugin.xSync.listVersionHistory(item.path, async (data: any) => {
+				await this.plugin.xSync.readVersionHistory(item.path, data.data[0], async (data: any) => {
+					data = AnySocket.Packer.unpack(data);
+					let metadata = await this.plugin.xSync.getMetadata(
+						"restore",
+						{
+							path: item.path,
+							data: data
+						}
+					);
+					// force an update
+					metadata.sha1 = null;
+
+					await this.plugin.xSync.storage.writeBinary(item.path, data, metadata);
+					new Notice("Restored - " + parts[parts.length - 1]);
+				});
+			});
+		}
+		else {
+			new VersionHistoryModal(this.plugin, item.path);
+		}
 	}
 
 	renderSuggestion(value: DeletedFile, el: HTMLElement): any {

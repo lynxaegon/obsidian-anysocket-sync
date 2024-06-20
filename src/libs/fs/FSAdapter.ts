@@ -12,7 +12,7 @@ export default class FSAdapter {
 		});
 	}
 
-	async write(path: string, data: string, mtime: number) {
+	async write(path: string, data: string, mtime: number, binary: boolean = false) {
 		if(!await this.exists(path)) {
 			let folder = path.split("/").slice(0, -1).join("/");
 			if(folder) {
@@ -26,13 +26,21 @@ export default class FSAdapter {
 					mtime: mtime
 				};
 			}
-			await app.vault.adapter.write(normalizePath(this.basePath + path), data, options);
+			if(binary) {
+				await app.vault.adapter.writeBinary(normalizePath(this.basePath + path), data, options);
+			}
+			else {
+				await app.vault.adapter.write(normalizePath(this.basePath + path), data, options);
+			}
 		}
 		return data;
 	}
 
-	async read(path: string) {
+	async read(path: string, binary = false) {
 		try {
+			if(binary) {
+				return await app.vault.adapter.readBinary(normalizePath(this.basePath + path));
+			}
 			return await app.vault.adapter.read(normalizePath(this.basePath + path));
 		}
 		catch(e) {

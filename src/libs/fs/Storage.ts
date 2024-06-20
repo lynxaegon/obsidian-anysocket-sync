@@ -26,6 +26,11 @@ export default class Storage {
 		return await this.fsVault.write(path, data, metadata.mtime);
 	}
 
+	async writeBinary(path: string, data: Uint8Array, metadata: any) {
+		await this.writeMetadata(path, metadata);
+		return await this.fsVault.write(path, data, metadata.mtime, true);
+	}
+
 	async makeFolder(path: string, metadata: any) {
 		await this.writeMetadata(path, metadata);
 		return await this.fsVault.makeFolder(path);
@@ -33,6 +38,10 @@ export default class Storage {
 
 	async read(path: string) {
 		return await this.fsVault.read(path);
+	}
+
+	async readBinary(path: string) {
+		return await this.fsVault.read(path, true);
 	}
 
 	async delete(path: string, metadata: any) {
