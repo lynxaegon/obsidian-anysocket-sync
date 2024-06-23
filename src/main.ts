@@ -75,7 +75,7 @@ export default class AnySocketSyncPlugin extends Plugin {
 		}));
 
 		this.addCommand({
-			id: "anysocket-sync-command-files-version-history",
+			id: "command-files-version-history",
 			name: "Version history",
 			callback: async () => {
 				new FilesHistoryModal(this, false);
@@ -83,7 +83,7 @@ export default class AnySocketSyncPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "anysocket-sync-command-deleted-files-version-history",
+			id: "command-deleted-files-version-history",
 			name: "Deleted files history",
 			callback: async () => {
 				new FilesHistoryModal(this, true);
