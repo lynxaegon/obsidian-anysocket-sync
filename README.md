@@ -19,7 +19,6 @@ Coming soon:
 * Plugins sync
 
 Known issues:
-- some files (.xlsx) don't seem to sync correctly
 - on mobile, the version history and deleted files panels are not displayed fully
 - History is lost on rename (WIP)
 
