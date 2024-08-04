@@ -9,7 +9,7 @@ import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
 import {hostname} from "os";
 import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";
 import Utils from "./libs/Utils";
-const UAParser = require("ua-parser-js");
+import {UAParser} from "ua-parser-js";
 
 interface AnySocketSyncSettings {
 	host: string;
@@ -21,7 +21,6 @@ interface AnySocketSyncSettings {
 }
 
 let deviceInfo = (new UAParser(navigator.userAgent)).getDevice();
-
 function getDefaultDeviceName() {
 	return Platform.isDesktop ? hostname() : deviceInfo.model || "Unknown";
 }

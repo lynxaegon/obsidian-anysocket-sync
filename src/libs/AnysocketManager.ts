@@ -2,8 +2,8 @@
 import {Notice, Plugin} from "obsidian";
 import Utils from "./Utils";
 import XSync from "../XSync";
-const EventEmitter = require('./Events');
-const AnySocket = require("anysocket");
+import EventEmitter from "./Events";
+import AnySocket from "anysocket";
 
 export default class AnysocketManager extends EventEmitter {
 	plugin: Plugin;
