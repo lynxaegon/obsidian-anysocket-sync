@@ -6,14 +6,15 @@ import {
 import AnysocketManager from "./libs/AnysocketManager";
 import Utils from "./libs/Utils";
 import Storage from "./libs/fs/Storage";
-import { inspect } from "util";
 import AnySocket from "anysocket/src/libs/AnySocket";
+import XTimeouts from "./libs/XTimeouts";
 
 export default class XSync {
 	plugin: Plugin;
 	isEnabled = false;
 	eventRefs: any = {};
 	anysocket: any;
+	xTimeouts: XTimeouts;
 	storage: Storage;
 	reloadTimeout = null;
 
@@ -21,7 +22,7 @@ export default class XSync {
 		this.plugin = plugin;
 		this.anysocket = new AnysocketManager(this);
 		this.storage = new Storage(plugin);
-
+		this.xTimeouts = new XTimeouts();
 		/* realtime CRDT sync
 		this.plugin.registerEditorExtension(
 			EditorView.updateListener.of((update) => {
@@ -119,6 +120,11 @@ export default class XSync {
 	}
 
 	async sync() {
+		if(!this.anysocket.isConnected) return;
+		if(this.isSyncing) return;
+
+		this.isSyncing = true;
+		new Notice("🟡 AnySocket Sync - Syncing...");
 		this.debug && console.log("sync");
 		let data = [];
 		await this.storage.iterate(async (item: any) => {
@@ -147,24 +153,44 @@ export default class XSync {
 		});
 	}
 
+	async onSyncCompleted(peer) {
+		this.isSyncing = false;
+		new Notice("🟢 AnySocket Sync - Sync completed");``
+	}
+
+	async onFocusChanged() {
+		this.xTimeouts.executeAll();
+	}
+
 	// create, modify, delete, rename
 	async processLocalEvent(action: string, file: TAbstractFile, args: any) {
+		if(!this.plugin.settings.autoSync) {
+			return;
+		}
+
 		if (action == "rename") {
 			await this.processLocalEvent("delete", {path: args[0]})
 			await this.processLocalEvent("create", file);
 			return;
 		}
-		this.debug && console.log("event", action, file.path);
 
+		if(action == "modify" && this.plugin.settings.delayedSync > 0) {
+			this.xTimeouts.set(file.path, this.plugin.settings.delayedSync * 1000, async () => {
+				await this._processLocalEvent(action, file, args);
+			});
+		}
+		else {
+			await this._processLocalEvent(action, file, args);
+		}
+	}
+
+	async _processLocalEvent(action: string, file: TAbstractFile, args: any) {
+		this.debug && console.log("anysocket sync event", action, file.path);
 		try {
 			let result = await this.getMetadata(action, file);
-			if (!result.changed)
-				return;
-
-			if (!this.anysocket.isConnected) {
+			if (!result.changed || !this.anysocket.isConnected) {
 				return;
 			}
-
 			result.metadata.path = file.path;
 			this.anysocket.send({
 				type: "file_event",
@@ -222,6 +248,10 @@ export default class XSync {
 		this.registerEvent("delete");
 		this.registerEvent("rename");
 
+		let focusChanged = Utils.debounce(this.onFocusChanged.bind(this), 500);
+		this.eventRefs["active-leaf-change"] = app.workspace.on('active-leaf-change', focusChanged);
+		this.eventRefs["layout-change"] = app.workspace.on('layout-change', focusChanged);
+
 		this.anysocket.on("connected", async (peer) => {
 			new Notice("🟢 AnySocket Sync - Connected");
 			this.plugin.ribbonIcon.removeClass("offline");
@@ -230,13 +260,25 @@ export default class XSync {
 			if(deviceName != null && deviceName != "Unknown") {
 				await peer.rpc.setDeviceId(deviceName);
 			}
-			await this.sync();
+			if(!this.plugin.settings.autoSync) {
+				await peer.rpc.autoSync(this.plugin.settings.autoSync);
+			}
+
+			if(this.plugin.settings.autoSync) {
+				await this.sync();
+			}
+			else {
+				new Notice("🟡 AnySocket Sync - Auto sync disabled");
+			}
 		});
 
 		this.anysocket.on("message", (packet) => {
 			switch (packet.msg.type) {
 				case "file_data":
 					this.onFileData(packet.msg.data, packet.peer);
+					break;
+				case "sync_complete":
+					this.onSyncCompleted(packet.peer);
 					break;
 			}
 		});
@@ -263,6 +305,8 @@ export default class XSync {
 		this.unregisterEvent("modify");
 		this.unregisterEvent("delete");
 		this.unregisterEvent("rename");
+		app.workspace.offref(this.eventRefs["active-leaf-change"]);
+		app.workspace.offref(this.eventRefs["layout-change"]);
 
 		this.anysocket.stop();
 
@@ -280,6 +324,10 @@ export default class XSync {
 
 	async onFileData(data, peer) {
 		this.debug && console.log("FileData:", data);
+
+		if(!this.plugin.settings.autoSync && !this.isSyncing) {
+			return;
+		}
 
 		if (data.type == "send") {
 			let isBinary = Utils.isBinary(data.path);

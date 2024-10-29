@@ -264,6 +264,16 @@ export default new (class Utils {
 		"zipx"
 	]
 
+	debounce(func: () => void, delay: number) {
+		let timeout: number | null = null;
+		return () => {
+			if (timeout) clearTimeout(timeout);
+			timeout = window.setTimeout(() => {
+				func();
+			}, delay);
+		};
+	}
+
 	async getSHA(data: any) {
 		if(!data)
 			return null;

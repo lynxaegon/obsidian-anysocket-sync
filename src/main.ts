@@ -16,6 +16,8 @@ interface AnySocketSyncSettings {
 	port: string;
 	password: string;
 	syncEnabled: boolean;
+	delayedSync: number;
+	autoSync: boolean;
 	deviceName: string;
 	debug: boolean;
 }
@@ -30,6 +32,8 @@ const DEFAULT_SETTINGS: AnySocketSyncSettings = {
 	port: "3000",
 	password: "",
 	syncEnabled: false,
+	delayedSync: 3,
+	autoSync: true,
 	deviceName: getDefaultDeviceName(),
 	debug: false,
 }
@@ -82,6 +86,14 @@ export default class AnySocketSyncPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "sync-now",
+			name: "Sync Now",
+			callback: async () => {
+				await this.xSync.sync();
+			}
+		});
+
+		this.addCommand({
 			id: "deleted-version-history",
 			name: "Deleted files history",
 			callback: async () => {
@@ -128,6 +140,10 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
+			.setName("Connection settings")
+			.setHeading();
+
+		new Setting(containerEl)
 			.setName('Device name')
 			.addText(text => text
 				.setPlaceholder(getDefaultDeviceName())
@@ -171,12 +187,53 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 				}
 			);
 		new Setting(containerEl)
-			.setName('Sync')
+			.setName('Enable Connection')
 			.addToggle((toggle) => {
 				toggle
 					.setValue(this.plugin.settings.syncEnabled)
 					.onChange(async (value) => {
 						this.plugin.settings.syncEnabled = value;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Sync settings")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName('Delayed Sync')
+			.setDesc("Delay sync until no changes for the specified duration (or focus changed)")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("0", "Instant");
+				dropdown.addOption("3", "3s");
+				dropdown.addOption("4", "4s");
+				dropdown.addOption("5", "5s");
+				dropdown.addOption("10", "10s");
+				dropdown.addOption("15", "15s");
+				dropdown.addOption("20", "20s");
+				dropdown.addOption("25", "25s");
+				dropdown.addOption("30", "30s");
+				dropdown.addOption("60", "1m");
+				dropdown.addOption("300", "5m");
+				dropdown.addOption("600", "10m");
+				dropdown.addOption("900", "15m");
+
+				dropdown.setValue(this.plugin.settings.delayedSync.toString())
+					.onChange(async (value) => {
+						this.plugin.settings.delayedSync = parseInt(value);
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName('Auto Sync')
+			.setDesc("Automatically sync when local/remote changes are detected")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.autoSync)
+					.onChange(async (value) => {
+						this.plugin.settings.autoSync = value;
 						await this.plugin.saveSettings();
 					});
 			});

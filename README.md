@@ -9,6 +9,7 @@
 * Sync all types of files across any device (works on mobile)
 * Version History (customizable)
 * Recover deleted files (customizable)
+* Supports syncing on demand
 * Works offline
 * Auto updates when <a href="https://github.com/lynxaegon/obsidian-anysocket-sync-server">server</a> is updated
 

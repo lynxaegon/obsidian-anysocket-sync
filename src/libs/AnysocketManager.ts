@@ -11,6 +11,7 @@ export default class AnysocketManager extends EventEmitter {
 	eventRefs: any = {};
 	anysocket: any;
 	isConnected: boolean = false;
+	isUpdating: boolean = false;
 	notifiedOfConnectError = false;
 	peer = null;
 
@@ -77,18 +78,27 @@ export default class AnysocketManager extends EventEmitter {
 	}
 
 	async checkForUpdates(peer) {
+		this.isUpdating = false;
 		let result = await peer.rpc.onVersionCheck(this.plugin.VERSION, this.plugin.BUILD);
 		if(result.type == "ok") {
 			this.peer = peer;
 			this.isConnected = true;
+			this.isUpdating = false;
 			this.emit("connected", peer);
 		} else if (result.type == "update") {
+			this.isUpdating = true;
 			await this.xSync.storage.updatePlugin(result.files);
-			window._anysocketID = this.anysocket.id;
 			// ignore disconnected message
 			this.anysocket.removeAllListeners("disconnected");
+			this.anysocket.stop();
+
 			app.plugins.disablePlugin("anysocket-sync");
-			new Notice("🟡 AnySocket Sync - Updated to version: " + result.version);
+			if(this.plugin.BUILD >= result.build) {
+				new Notice("🟡 AnySocket Sync - Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
+			}
+			else {
+				new Notice("🟡 AnySocket Sync - Updated to version: " + result.version);
+			}
 			app.plugins.enablePlugin("anysocket-sync");
 		} else {
 			this.anysocket.removeAllListeners();
@@ -109,21 +119,16 @@ export default class AnysocketManager extends EventEmitter {
 			return;
 		}
 
-		// Used only to keep the same AnySocket ID after hot reload
-		if(window._anysocketID) {
-			this.anysocket.id = window._anysocketID;
-			delete window._anysocketID;
-		}
 		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
 			peer.e2e();
 			this.notifiedOfConnectError = false;
 		}).catch((e) => {
 			console.error("AnySocket Connect Error", e);
-			this.isConnected = false;
-			if(!this.notifiedOfConnectError) {
+			if(!this.notifiedOfConnectError && !this.isUpdating) {
 				this.notifiedOfConnectError = true;
-				new Notice("🟡 AnySocket Sync - Could not connect to the server", );
+				new Notice("🔴 AnySocket Sync - No connection", );
 			}
+			this.isConnected = false;
 			this.emit("reload");
 		});
 	}
