@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-anysocket-sync",
-	"version": "1.3.0",
+	"version": "1.3.2",
 	"description": "Self-Hosted synchronization for you Vault using AnySocket",
 	"main": "main.js",
 	"scripts": {
