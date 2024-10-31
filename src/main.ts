@@ -4,7 +4,7 @@ import {
 	PluginSettingTab,
 	Setting
 } from 'obsidian';
-import XSync from './XSync';
+import XSync, {NotifyType} from './XSync';
 import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
 import {hostname} from "os";
 import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";
@@ -18,6 +18,7 @@ interface AnySocketSyncSettings {
 	syncEnabled: boolean;
 	delayedSync: number;
 	autoSync: boolean;
+	notifications: number;
 	deviceName: string;
 	debug: boolean;
 }
@@ -34,6 +35,7 @@ const DEFAULT_SETTINGS: AnySocketSyncSettings = {
 	syncEnabled: false,
 	delayedSync: 3,
 	autoSync: true,
+	notifications: 1,
 	deviceName: getDefaultDeviceName(),
 	debug: false,
 }
@@ -43,7 +45,10 @@ export default class AnySocketSyncPlugin extends Plugin {
 	BUILD = "__anysocketsync_build__";
 	settings: AnySocketSyncSettings;
 	xSync: XSync;
-	ribbonIcon: HTMLElement;
+	statusBarItem: HTMLElement;
+	statusBarIcon: HTMLElement;
+	statusBarMessage: HTMLElement;
+	timeoutStatusMessage: any;
 	isLoading = false;
 
 	async onload() {
@@ -101,15 +106,11 @@ export default class AnySocketSyncPlugin extends Plugin {
 			}
 		});
 
-
-		this.ribbonIcon = this.addRibbonIcon('paper-plane', 'AnySocket Sync', () => {});
-		this.ribbonIcon.addClass("anysocket-ribbon-icon");
-		this.ribbonIcon.addClass("offline");
-
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new AnySocketSyncSettingTab(this));
 
 		this.xSync = new XSync(this);
+		this.xSync.makeStatusBarItem(this.addStatusBarItem());
 		await this.xSync.enabled(true);
 	}
 
@@ -124,6 +125,10 @@ export default class AnySocketSyncPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 		this.xSync.reload();
+	}
+
+	getSVGIcon() {
+		return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide-send"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"></path><path d="m21.854 2.147-10.94 10.939"></path></svg>';
 	}
 }
 
@@ -234,6 +239,20 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.autoSync)
 					.onChange(async (value) => {
 						this.plugin.settings.autoSync = value;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName('Notifications')
+			.addDropdown((dropdown) => {
+				dropdown.addOption("0", "Off");
+				dropdown.addOption("1", "Connection status");
+				dropdown.addOption("2", "Connection & sync status");
+
+				dropdown.setValue(this.plugin.settings.notifications.toString())
+					.onChange(async (value) => {
+						this.plugin.settings.notifications = parseInt(value);
 						await this.plugin.saveSettings();
 					});
 			});

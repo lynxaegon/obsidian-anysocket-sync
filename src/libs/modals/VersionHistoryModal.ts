@@ -23,15 +23,21 @@ export class VersionHistoryModal extends Modal {
 	setup() {
 		this.modalEl.addClass("anysocket-version-history");
 
-		let elList = this.contentEl.createDiv("history-list");
-		let elContainer = this.contentEl.createDiv("version-container");
-		let elContent = elContainer.createDiv("version-content");
+		this.elList = this.contentEl.createDiv("history-list");
+		this.elContainer = this.contentEl.createDiv("version-container");
+		let elContent = this.elContainer.createDiv("version-content");
 
 		// Titlebar setup
 		let elTitle = elContent.createDiv("version-titlebar");
+		this.backButton = elTitle.createEl("button", {text: "Back", onclick: this.onBack.bind(this)});
+		if(!this.app.isMobile) {
+			this.backButton.hide();
+		}
 		let parts = this.path.split("/");
 		this.name = parts[parts.length - 1];
-		let fileName = elTitle.createDiv("version-filename").textContent = this.name;
+		let fileName = elTitle.createDiv("version-filename").textContent = "";
+		this.titleEl.setText(this.name);
+		window._x = this.modalEl;
 		let actions = elTitle.createDiv("version-actions");
 		this.buttonRestore = actions.createEl("button", {text: "Restore", onclick: this.onRestore.bind(this)});
 		this.buttonRestore.disabled = true;
@@ -43,6 +49,9 @@ export class VersionHistoryModal extends Modal {
 		this.markdownView = new MarkdownPreviewView(this);
 		this.contentEl = _originalContentEl;
 
+		if(this.app.isMobile) {
+			this.elContainer.hide();
+		}
 
 		// show version content
 		this.plugin.xSync.listVersionHistory(this.path, (data: any) => {
@@ -55,7 +64,7 @@ export class VersionHistoryModal extends Modal {
 			}
 
 			for(let timestamp of data.data) {
-				let item = elList.createDiv("version-timestamp");
+				let item = this.elList.createDiv("version-timestamp");
 				let versionItem = {
 					timestamp: timestamp,
 					el: item
@@ -66,7 +75,11 @@ export class VersionHistoryModal extends Modal {
 				};
 				this.versions.push(versionItem);
 			}
-			this.internalItemSelect(this.versions[0]);
+
+			// only preselect the item on desktop
+			if(!this.app.isMobile) {
+				this.internalItemSelect(this.versions[0]);
+			}
 		});
 	}
 
@@ -111,6 +124,20 @@ export class VersionHistoryModal extends Modal {
 				this.buttonRestore.textContent = "Restore"
 				this.buttonRestore.disabled = false;
 			}
+		}
+
+		if(this.app.isMobile) {
+			this.elContainer.show();
+			this.backButton.show();
+			this.elList.hide();
+		}
+	}
+
+	private async onBack() {
+		if(this.app.isMobile) {
+			this.elContainer.hide();
+			this.backButton.hide();
+			this.elList.show();
 		}
 	}
 

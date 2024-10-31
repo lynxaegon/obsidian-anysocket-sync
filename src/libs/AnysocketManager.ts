@@ -1,9 +1,11 @@
 // @ts-nocheck
 import {Notice, Plugin} from "obsidian";
 import Utils from "./Utils";
-import XSync from "../XSync";
+import XSync, {NotifyType} from "../XSync";
 import EventEmitter from "./Events";
 import AnySocket from "anysocket";
+
+const NOTICE_COLOR = "#ffaa00";
 
 export default class AnysocketManager extends EventEmitter {
 	plugin: Plugin;
@@ -94,16 +96,16 @@ export default class AnysocketManager extends EventEmitter {
 
 			app.plugins.disablePlugin("anysocket-sync");
 			if(this.plugin.BUILD >= result.build) {
-				new Notice("🟡 AnySocket Sync - Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
+				this.xSync.makeNotice(NOTICE_COLOR, "Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
 			}
 			else {
-				new Notice("🟡 AnySocket Sync - Updated to version: " + result.version);
+				this.xSync.makeNotice(NOTICE_COLOR, "Updated to version: " + result.version);
 			}
 			app.plugins.enablePlugin("anysocket-sync");
 		} else {
 			this.anysocket.removeAllListeners();
 			this.emit("unload");
-			new Notice("🟡 AnySocket Sync - Incompatible client version " + this.plugin.VERSION);
+			this.xSync.makeNotice(NOTICE_COLOR, "Incompatible client version " + this.plugin.VERSION);
 		}
 	}
 
@@ -114,7 +116,7 @@ export default class AnysocketManager extends EventEmitter {
 
 		if(!this.plugin.settings.password) {
 			console.log("AnySocket Sync - Requires setup");
-			new Notice("🟡 AnySocket Sync - Requires setup");
+			this.xSync.makeNotice(NOTICE_COLOR, "AnySocket Sync - Requires setup");
 			this.emit("unload");
 			return;
 		}
@@ -126,7 +128,7 @@ export default class AnysocketManager extends EventEmitter {
 			console.error("AnySocket Connect Error", e);
 			if(!this.notifiedOfConnectError && !this.isUpdating) {
 				this.notifiedOfConnectError = true;
-				new Notice("🔴 AnySocket Sync - No connection", );
+				this.xSync.notifyStatus(NotifyType.NOT_CONNECTED);
 			}
 			this.isConnected = false;
 			this.emit("reload");

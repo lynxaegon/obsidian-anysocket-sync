@@ -4,23 +4,24 @@
 
 <a name="features"></a>
 ## Features
-* Instant E2E encrypted Sync
+* E2E encrypted Sync (transport layer)
 * Connect as many devices as you like
 * Sync all types of files across any device (works on mobile)
-* Version History (customizable)
-* Recover deleted files (customizable)
+* Version History (customizable retention)
+* Recover deleted files (customizable retention)
 * Supports syncing on demand
 * Works offline
 * Auto updates when <a href="https://github.com/lynxaegon/obsidian-anysocket-sync-server">server</a> is updated
 
+_**Info**: This is not a CRDT Sync (like GDocs), it's a file sync so conflicts can happen if you edit the same file on multiple devices at the same time. 
+Conflict resolution is **last write wins**_ 
+
 Coming soon:
-* Version History / Deleted files - **mobile visual fix**
 * Don't lose history on rename
 * 2FA for allowing other devices (increased protection)
 * Plugins sync
 
 Known issues:
-- on mobile, the version history and deleted files panels are not displayed fully
 - History is lost on rename (WIP)
 
 _if you find others, please <a href="https://github.com/lynxaegon/obsidian-anysocket-sync/issues/new"> create an issue</a>_
