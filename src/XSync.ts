@@ -36,35 +36,13 @@ export default class XSync {
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
+		this.unsentSessionEvents = {};
 		this.anysocket = new AnysocketManager(this);
 		this.storage = new Storage(plugin);
 		this.xTimeouts = new XTimeouts();
-		/* realtime CRDT sync
-		this.plugin.registerEditorExtension(
-			EditorView.updateListener.of((update) => {
-				if (update.changes) {
-					// Iterate over the changes
-					update.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
-						if (fromA === toA && fromB !== toB) {
-							// This is an insertion
-							console.log("Insertion detected from", fromB, "to", toB, ":", inserted.toString());
-						} else if (fromA !== toA && fromB === toB) {
-							// This is a deletion
-							console.log("Deletion detected from", fromA, "to", toA);
-						} else {
-							// This is a replace (deletion followed by an insertion)
-							console.log("Replace detected from", fromA, "to", toA, "with", inserted.toString());
-						}
-					});
-				}
-			})
-		);
-		 */
 	}
 
 	async enabled(value) {
-		const item = this.plugin.addStatusBarItem();
-		item.createEl('span', { text: '' });
 		if (this.isEnabled !== value) {
 			this.isEnabled = value;
 			if (this.isEnabled) {
@@ -135,6 +113,12 @@ export default class XSync {
 		if(!this.anysocket.isConnected) return;
 		if(this.isSyncing) return;
 
+		for(let key in this.unsentSessionEvents) {
+			let event = this.unsentSessionEvents[key];
+			await this.processLocalEvent(event.action, event.file, event.args, true);
+		}
+		this.unsentSessionEvents = {};
+
 		this.isSyncing = true;
 		this.notifyStatus(NotifyType.SYNCING);
 		this.debug && console.log("sync");
@@ -175,31 +159,41 @@ export default class XSync {
 	}
 
 	// create, modify, delete, rename
-	async processLocalEvent(action: string, file: TAbstractFile, args: any) {
-		if(!this.plugin.settings.autoSync) {
+	async processLocalEvent(action: string, file: TAbstractFile, args: any, fromUnsent: boolean = false) {
+		if(!this.anysocket.isConnected) {
+			return;
+		}
+
+		if(!this.plugin.settings.autoSync && !fromUnsent) {
+			this.unsentSessionEvents[file.path] = {
+				action: action,
+				file: file,
+				args: args
+			};
 			return;
 		}
 
 		if (action == "rename") {
-			await this.processLocalEvent("delete", {path: args[0]})
-			await this.processLocalEvent("create", file);
+			await this.processLocalEvent("delete", {path: args[0]}, null, fromUnsent)
+			await this.processLocalEvent("create", file, null, fromUnsent);
 			return;
 		}
 
+		let metadata = await this.getMetadata(action, file);
 		if(action == "modify" && this.plugin.settings.delayedSync > 0) {
 			this.xTimeouts.set(file.path, this.plugin.settings.delayedSync * 1000, async () => {
-				await this._processLocalEvent(action, file, args);
+				await this._processLocalEvent(action, file, metadata);
 			});
 		}
 		else {
-			await this._processLocalEvent(action, file, args);
+			await this._processLocalEvent(action, file, metadata);
 		}
 	}
 
-	async _processLocalEvent(action: string, file: TAbstractFile, args: any) {
-		this.debug && console.log("anysocket sync event", action, file.path);
+	async _processLocalEvent(action: string, file: TAbstractFile, metadata: any) {
+		this.debug && console.log("anysocket sync event", action, file.path, metadata);
 		try {
-			let result = await this.getMetadata(action, file);
+			let result = metadata || await this.getMetadata(action, file);
 			if (!result.changed || !this.anysocket.isConnected) {
 				return;
 			}
@@ -238,23 +232,7 @@ export default class XSync {
 		this.debug = this.plugin.settings.debug;
 
 		await this.storage.init();
-		await (async () => {
-			let loaded = 0;
-			let times = 2;
-			return new Promise((resolve) => {
-				let interval = setInterval(() => {
-					let current = app.vault.getAllLoadedFiles();
-					if (loaded < current.length) {
-						loaded = current.length;
-					} else if (loaded == current.length && --times <= 0) {
-						clearInterval(interval);
-						resolve();
-					}
-				}, 500);
-			});
-		})();
 
-		// wait for vault creation before registering to events
 		this.registerEvent("create");
 		this.registerEvent("modify");
 		this.registerEvent("delete");

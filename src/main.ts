@@ -24,6 +24,7 @@ interface AnySocketSyncSettings {
 }
 
 let deviceInfo = (new UAParser(navigator.userAgent)).getDevice();
+
 function getDefaultDeviceName() {
 	return Platform.isDesktop ? hostname() : deviceInfo.model || "Unknown";
 }
@@ -49,20 +50,19 @@ export default class AnySocketSyncPlugin extends Plugin {
 	statusBarIcon: HTMLElement;
 	statusBarMessage: HTMLElement;
 	timeoutStatusMessage: any;
-	isLoading = false;
+	isReady: boolean = false;
 
 	async onload() {
 		await this.loadSettings();
-
 		this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
 			// @ts-ignore
 			// if folder, return
 
-			if(!file.stat) {
+			if (!file.stat) {
 				return;
 			}
 
-			if(!Utils.isBinary(file.path)) {
+			if (!Utils.isBinary(file.path)) {
 				menu.addItem((item) => {
 					item
 						.setTitle("Version history")
@@ -111,6 +111,21 @@ export default class AnySocketSyncPlugin extends Plugin {
 
 		this.xSync = new XSync(this);
 		this.xSync.makeStatusBarItem(this.addStatusBarItem());
+
+		// startup
+		if(!app.workspace.layoutReady) {
+			// @ts-ignore
+			this.registerEvent(this.app.workspace.on("layout-ready", async () => {
+				await this.ready();
+			}));
+		}
+		else {
+			await this.ready();
+		}
+	}
+
+	async ready() {
+		this.isReady = true;
 		await this.xSync.enabled(true);
 	}
 
@@ -154,7 +169,7 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 				.setPlaceholder(getDefaultDeviceName())
 				.setValue(this.plugin.settings.deviceName)
 				.onChange(async (value) => {
-					if(value == "") {
+					if (value == "") {
 						value = getDefaultDeviceName();
 					}
 					this.plugin.settings.deviceName = value;
