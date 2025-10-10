@@ -23,47 +23,75 @@ export class VersionHistoryModal extends Modal {
 	setup() {
 		this.modalEl.addClass("anysocket-version-history");
 
+		// Get filename from path
+		let parts = this.path.split("/");
+		this.name = parts[parts.length - 1];
+		this.titleEl.setText("Version History");
+
+		// Create main layout
 		this.elList = this.contentEl.createDiv("history-list");
 		this.elContainer = this.contentEl.createDiv("version-container");
 		let elContent = this.elContainer.createDiv("version-content");
 
 		// Titlebar setup
 		let elTitle = elContent.createDiv("version-titlebar");
-		this.backButton = elTitle.createEl("button", {text: "Back", onclick: this.onBack.bind(this)});
-		if(!this.app.isMobile) {
-			this.backButton.hide();
+		
+		// Back button (mobile portrait only)
+		if (this.app.isMobile) {
+			this.backButton = elTitle.createEl("button", {
+				cls: "clickable-icon",
+				attr: { "aria-label": "Back to versions list" }
+			});
+			this.backButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`;
+			this.backButton.onclick = this.onBack.bind(this);
+			
+			// Hide back button in landscape (both views visible)
+			if (!this.isPortrait()) {
+				this.backButton.hide();
+			}
 		}
-		let parts = this.path.split("/");
-		this.name = parts[parts.length - 1];
-		let fileName = elTitle.createDiv("version-filename").textContent = "";
-		this.titleEl.setText(this.name);
-		window._x = this.modalEl;
-		let actions = elTitle.createDiv("version-actions");
-		this.buttonRestore = actions.createEl("button", {text: "Restore", onclick: this.onRestore.bind(this)});
-		this.buttonRestore.disabled = true;
 
-		////// Content Setup
-		// hack for markdown preview
+		// Filename display
+		let fileName = elTitle.createDiv("version-filename");
+		fileName.textContent = this.name;
+
+		// Actions
+		let actions = elTitle.createDiv("version-actions");
+		this.buttonRestore = actions.createEl("button", {
+			text: "Restore",
+			cls: "mod-cta"
+		});
+		this.buttonRestore.disabled = true;
+		this.buttonRestore.onclick = this.onRestore.bind(this);
+
+		// Markdown preview setup (hack for MarkdownPreviewView)
 		let _originalContentEl = this.contentEl;
 		this.contentEl = elContent;
 		this.markdownView = new MarkdownPreviewView(this);
 		this.contentEl = _originalContentEl;
 
-		if(this.app.isMobile) {
+		// Hide container on mobile portrait initially (landscape shows both)
+		if (this.app.isMobile && this.isPortrait()) {
 			this.elContainer.hide();
 		}
 
-		// show version content
+		// Load version history
 		this.plugin.xSync.listVersionHistory(this.path, (data: any) => {
 			this.versions = [];
-			if (data && data.data.length <= 0) {
+			if (!data || data.data.length <= 0) {
+				this.elList.createDiv({
+					text: "No version history found",
+					cls: "version-timestamp"
+				}).style.opacity = "0.5";
 				return;
 			}
-			if(data.deleted) {
+
+			if (data.deleted) {
 				this.type = "deleted";
 			}
 
-			for(let timestamp of data.data) {
+			// Create version items
+			for (let timestamp of data.data) {
 				let item = this.elList.createDiv("version-timestamp");
 				let versionItem = {
 					timestamp: timestamp,
@@ -76,8 +104,8 @@ export class VersionHistoryModal extends Modal {
 				this.versions.push(versionItem);
 			}
 
-			// only preselect the item on desktop
-			if(!this.app.isMobile) {
+			// Auto-select first item on desktop or mobile landscape
+			if (this.versions.length > 0 && (!this.app.isMobile || !this.isPortrait())) {
 				this.internalItemSelect(this.versions[0]);
 			}
 		});
@@ -101,42 +129,49 @@ export class VersionHistoryModal extends Modal {
 	}
 
 	private internalItemSelect(item) {
-		this.versions.map(v => v.el.removeClass("active"));
+		// Update active state
+		this.versions.forEach(v => v.el.removeClass("active"));
 		item.el.addClass("active");
 
+		// Load version content
 		this.plugin.xSync.readVersionHistory(this.path, item.timestamp, (data: any) => {
-			if(typeof data !== "string") {
+			if (typeof data !== "string") {
 				data = "";
 			}
 			this.markdownView.set(data, true);
 			this.markdownView.applyScroll(0);
 		});
+
 		this.selectedVersion = item;
 
-		this.buttonRestore.textContent = "Restore"
-		this.buttonRestore.disabled = false;
+		// Update restore button state
+		const isCurrentVersion = this.type === "created" && 
+			this.versions.length > 0 && 
+			this.selectedVersion.timestamp === this.versions[0].timestamp;
 
-		if(this.type == "created") {
-			if (this.selectedVersion.timestamp == this.versions[0].timestamp) {
-				this.buttonRestore.textContent = "Current"
-				this.buttonRestore.disabled = true;
-			} else {
-				this.buttonRestore.textContent = "Restore"
-				this.buttonRestore.disabled = false;
-			}
+		if (isCurrentVersion) {
+			this.buttonRestore.textContent = "Current";
+			this.buttonRestore.disabled = true;
+		} else {
+			this.buttonRestore.textContent = "Restore";
+			this.buttonRestore.disabled = false;
 		}
 
-		if(this.app.isMobile) {
+		// Mobile Portrait: Show content view (slide over)
+		// Mobile Landscape: Both views visible (no action needed)
+		if (this.app.isMobile && this.isPortrait()) {
 			this.elContainer.show();
-			this.backButton.show();
 			this.elList.hide();
 		}
 	}
 
+	private isPortrait(): boolean {
+		return window.innerHeight > window.innerWidth;
+	}
+
 	private async onBack() {
-		if(this.app.isMobile) {
+		if (this.app.isMobile) {
 			this.elContainer.hide();
-			this.backButton.hide();
 			this.elList.show();
 		}
 	}
