@@ -119,6 +119,17 @@ export default class XSync {
 			for(let path of queuedPaths) {
 				const deleteEvent = itemsToProcess[path];
 				try {
+					// Safety check: verify file is actually still deleted
+					const file = app.vault.getAbstractFileByPath(path);
+					if (file) {
+						// File exists again - check if it's newer than our queued deletion
+						const currentMetadata = await this.storage.readMetadata(path);
+						if (currentMetadata && currentMetadata.mtime > deleteEvent.metadata.mtime) {
+							processedPaths.push(path); // Remove from queue
+							continue;
+						}
+					}
+
 					this.anysocket.peer.send({
 						type: "file_event",
 						data: {
@@ -211,6 +222,12 @@ export default class XSync {
 				args: args
 			};
 			return;
+		}
+
+		// If creating or modifying a file that's in the delete queue, remove it
+		if ((action == "create" || action == "modify") && this.deleteQueue[file.path]) {
+			delete this.deleteQueue[file.path];
+			await this.storage.saveDeleteQueue(this.deleteQueue);
 		}
 
 		if (action == "rename") {
