@@ -4,7 +4,8 @@ import {
 	PluginSettingTab,
 	Setting
 } from 'obsidian';
-import XSync, {NotifyType} from './XSync';
+import XSync from './XSync';
+import {NotifyType} from './libs/XNotify';
 import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
 import {hostname} from "os";
 import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";

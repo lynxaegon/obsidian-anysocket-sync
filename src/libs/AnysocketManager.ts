@@ -1,7 +1,8 @@
 // @ts-nocheck
 import {Notice, Plugin} from "obsidian";
 import Utils from "./Utils";
-import XSync, {NotifyType} from "../XSync";
+import XSync from "../XSync";
+import {NotifyType} from "./XNotify";
 import EventEmitter from "./Events";
 import AnySocket from "anysocket";
 
@@ -27,9 +28,12 @@ export default class AnysocketManager extends EventEmitter {
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
 		if (app.isMobile) {
 			activeWindow.onblur = () => {
+				console.log("AnysocketManager: Mobile onblur - emitting unload");
 				this.emit("unload");
 			};
 			activeWindow.onfocus = () => {
+				console.log("AnysocketManager: Mobile onfocus - emitting focus and reload");
+				this.emit("focus");
 				this.emit("reload");
 			};
 		}
@@ -96,16 +100,16 @@ export default class AnysocketManager extends EventEmitter {
 
 			app.plugins.disablePlugin("anysocket-sync");
 			if(this.plugin.BUILD >= result.build) {
-				this.xSync.makeNotice(NOTICE_COLOR, "Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
+				this.xSync.xNotify.makeNotice(NOTICE_COLOR, "Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
 			}
 			else {
-				this.xSync.makeNotice(NOTICE_COLOR, "Updated to version: " + result.version);
+				this.xSync.xNotify.makeNotice(NOTICE_COLOR, "Updated to version: " + result.version);
 			}
 			app.plugins.enablePlugin("anysocket-sync");
 		} else {
 			this.anysocket.removeAllListeners();
 			this.emit("unload");
-			this.xSync.makeNotice(NOTICE_COLOR, "Incompatible client version " + this.plugin.VERSION);
+			this.xSync.xNotify.makeNotice(NOTICE_COLOR, "Incompatible client version " + this.plugin.VERSION);
 		}
 	}
 
@@ -116,7 +120,7 @@ export default class AnysocketManager extends EventEmitter {
 
 		if(!this.plugin.settings.password) {
 			console.log("AnySocket Sync - Requires setup");
-			this.xSync.makeNotice(NOTICE_COLOR, "AnySocket Sync - Requires setup");
+			this.xSync.xNotify.makeNotice(NOTICE_COLOR, "AnySocket Sync - Requires setup");
 			this.emit("unload");
 			return;
 		}
@@ -128,7 +132,7 @@ export default class AnysocketManager extends EventEmitter {
 			console.error("AnySocket Connect Error", e);
 			if(!this.notifiedOfConnectError && !this.isUpdating) {
 				this.notifiedOfConnectError = true;
-				this.xSync.notifyStatus(NotifyType.NOT_CONNECTED);
+				this.xSync.xNotify.notifyStatus(NotifyType.NOT_CONNECTED);
 			}
 			this.isConnected = false;
 			this.emit("reload");

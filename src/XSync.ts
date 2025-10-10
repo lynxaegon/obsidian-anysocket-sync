@@ -1,28 +1,14 @@
 // @ts-nocheck
 import {
 	TAbstractFile,
-	Plugin, Notice,
+	Plugin,
 } from "obsidian";
 import AnysocketManager from "./libs/AnysocketManager";
 import Utils from "./libs/Utils";
 import Storage from "./libs/fs/Storage";
 import AnySocket from "anysocket/src/libs/AnySocket";
 import XTimeouts from "./libs/XTimeouts";
-
-const STATUS_OK = "#339933";
-const STATUS_SYNC = "#9900ff";
-const STATUS_WARN = "#ffaa00";
-const STATUS_ERROR = "#cc0000";
-
-export const NotifyType = {
-	PLUGIN_DISABLED: "Disabled",
-	NOT_CONNECTED: "Not connected",
-	SYNCING: "Syncing...",
-	SYNC_COMPLETED: "Sync completed",
-	AUTO_SYNC_DISABLED: "Auto Sync disabled",
-	CONNECTION_LOST: "Connection lost",
-	CONNECTED: "Connected"
-}
+import XNotify, { NotifyType } from "./libs/XNotify";
 
 
 export default class XSync {
@@ -33,6 +19,7 @@ export default class XSync {
 	xTimeouts: XTimeouts;
 	storage: Storage;
 	reloadTimeout = null;
+	xNotify: XNotify;
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
@@ -40,6 +27,7 @@ export default class XSync {
 		this.anysocket = new AnysocketManager(this);
 		this.storage = new Storage(plugin);
 		this.xTimeouts = new XTimeouts();
+		this.xNotify = new XNotify(this);
 	}
 
 	async enabled(value) {
@@ -48,19 +36,20 @@ export default class XSync {
 			if (this.isEnabled) {
 				await this.load(false);
 			} else {
-				this.unload(false);
+				// Full cleanup when disabling
+				this.unload(true);
 			}
 		}
 	}
 
 	connectionOK() {
 		if (!this.isEnabled) {
-			this.notifyStatus(NotifyType.PLUGIN_DISABLED);
+			this.xNotify.notifyStatus(NotifyType.PLUGIN_DISABLED);
 			return false;
 		}
 
 		if (!this.anysocket.isConnected) {
-			this.notifyStatus(NotifyType.NOT_CONNECTED);
+			this.xNotify.notifyStatus(NotifyType.NOT_CONNECTED);
 			return false;
 		}
 
@@ -120,7 +109,7 @@ export default class XSync {
 		this.unsentSessionEvents = {};
 
 		this.isSyncing = true;
-		this.notifyStatus(NotifyType.SYNCING);
+		this.xNotify.notifyStatus(NotifyType.SYNCING);
 		this.debug && console.log("sync");
 		let data = [];
 		await this.storage.iterate(async (item: any) => {
@@ -151,7 +140,7 @@ export default class XSync {
 
 	async onSyncCompleted(peer) {
 		this.isSyncing = false;
-		this.notifyStatus(NotifyType.SYNC_COMPLETED);
+		this.xNotify.notifyStatus(NotifyType.SYNC_COMPLETED);
 	}
 
 	async onFocusChanged() {
@@ -243,7 +232,7 @@ export default class XSync {
 		this.eventRefs["layout-change"] = app.workspace.on('layout-change', focusChanged);
 
 		this.anysocket.on("connected", async (peer) => {
-			this.notifyStatus(NotifyType.CONNECTED);
+			this.xNotify.notifyStatus(NotifyType.CONNECTED);
 
 			let deviceName = this.plugin.settings.deviceName || null;
 			if(deviceName != null && deviceName != "Unknown") {
@@ -257,7 +246,7 @@ export default class XSync {
 				await this.sync();
 			}
 			else {
-				this.notifyStatus(NotifyType.AUTO_SYNC_DISABLED);
+				this.xNotify.notifyStatus(NotifyType.AUTO_SYNC_DISABLED);
 			}
 		});
 
@@ -271,10 +260,15 @@ export default class XSync {
 					break;
 			}
 		});
+		this.anysocket.on("focus", () => {
+			// Mark that we're resuming from background
+			this.xNotify.setFromBackground(true);
+		});
 		this.anysocket.on("reload", this.reload.bind(this));
 		this.anysocket.on("unload", this.unload.bind(this));
 		this.anysocket.on("disconnected", () => {
-			this.notifyStatus(NotifyType.CONNECTION_LOST);
+			console.log("XSync: disconnected event fired, calling notifyStatus(CONNECTION_LOST)");
+			this.xNotify.notifyStatus(NotifyType.CONNECTION_LOST);
 
 			this.debug && console.log("disconnected");
 		});
@@ -282,8 +276,16 @@ export default class XSync {
 		this.anysocket.init();
 	}
 
-	unload() {
+	unload(cleanup = true) {
+		console.log("XSync: unload() called, cleanup =", cleanup);
 		clearTimeout(this.reloadTimeout);
+		
+		// Only cleanup notifications on full unload, not on reload
+		// Notification timeouts check connection state anyway
+		if (cleanup) {
+			console.log("XSync: calling xNotify.cleanup()");
+			this.xNotify.cleanup();
+		}
 
 		if (this.inited == false)
 			return;
@@ -302,8 +304,10 @@ export default class XSync {
 	}
 
 	reload() {
+		console.log("XSync: reload() called");
 		this.debug && console.log("reloaded");
-		this.unload();
+		// Don't cleanup notifications on reload - let them run
+		this.unload(false);
 		this.reloadTimeout = setTimeout(() => {
 			this.load();
 		}, 1000);
@@ -432,95 +436,6 @@ export default class XSync {
 	}
 
 	makeStatusBarItem(statusbar: any) {
-		this.statusBarItem = statusbar;
-		let container = this.statusBarItem.createEl('span');
-		container.style.verticalAlign = "middle";
-		container.style.display = "inline-flex";
-		container.style.alignItems = "center";
-
-		this.statusBarIcon = container.createEl('span');
-		this.statusBarIcon.style.paddingRight = "4px";
-		this.statusBarIcon.style.color = STATUS_ERROR;
-		this.statusBarIcon.innerHTML = this.plugin.getSVGIcon();
-		this.statusBarMessage = container.createEl('span');
-	}
-
-	setStatusMessage(message: string, keep: boolean = false) {
-		this.statusBarMessage.innerText = message;
-
-		clearTimeout(this.timeoutStatusMessage);
-		if(!keep) {
-			this.timeoutStatusMessage = setTimeout(() => {
-				this.statusBarMessage.innerText = "";
-			}, 2000);
-		}
-	}
-
-	makeNotice(color, text) {
-		let notice = (new Notice()).noticeEl;
-		let container = notice.createEl('span');
-		container.style.verticalAlign = "middle";
-		container.style.display = "inline-flex";
-		container.style.alignItems = "center";
-
-		let icon = container.createEl('span');
-		icon.style.paddingRight = "4px";
-		icon.style.color = color;
-		icon.innerHTML = this.plugin.getSVGIcon();
-		container.createEl('span', { text: text });
-	}
-
-	notifyStatus(type: any) {
-		switch (type) {
-			case NotifyType.PLUGIN_DISABLED:
-				if (this.settings.notifications > 0) {
-					this.makeNotice(STATUS_ERROR, NotifyType.PLUGIN_DISABLED);
-				}
-				this.statusBarIcon.style.color = STATUS_ERROR;
-				this.setStatusMessage(NotifyType.PLUGIN_DISABLED, false);
-				break;
-			case NotifyType.NOT_CONNECTED:
-				if (this.plugin.settings.notifications > 0) {
-					this.makeNotice(STATUS_ERROR, NotifyType.NOT_CONNECTED);
-				}
-				this.statusBarIcon.style.color = STATUS_ERROR;
-				this.setStatusMessage(NotifyType.NOT_CONNECTED, false);
-				break;
-			case NotifyType.SYNCING:
-				if (this.plugin.settings.notifications > 1) {
-					this.makeNotice(STATUS_SYNC, NotifyType.SYNCING);
-				}
-				this.statusBarIcon.style.color = STATUS_SYNC;
-				this.setStatusMessage(NotifyType.SYNCING, true);
-				break;
-			case NotifyType.SYNC_COMPLETED:
-				if (this.plugin.settings.notifications > 1) {
-					this.makeNotice(STATUS_OK, NotifyType.SYNC_COMPLETED);
-				}
-				this.statusBarIcon.style.color = STATUS_OK;
-				this.setStatusMessage(NotifyType.SYNC_COMPLETED, false);
-				break;
-			case NotifyType.AUTO_SYNC_DISABLED:
-				if (this.plugin.settings.notifications > 1) {
-					this.makeNotice(STATUS_WARN, NotifyType.AUTO_SYNC_DISABLED);
-				}
-				this.statusBarIcon.style.color = STATUS_WARN;
-				this.setStatusMessage(NotifyType.AUTO_SYNC_DISABLED, false);
-				break;
-			case NotifyType.CONNECTION_LOST:
-				if (this.plugin.settings.notifications > 0) {
-					this.makeNotice(STATUS_ERROR, NotifyType.CONNECTION_LOST);
-				}
-				this.statusBarIcon.style.color = STATUS_ERROR;
-				this.setStatusMessage(NotifyType.CONNECTION_LOST, false);
-				break;
-			case NotifyType.CONNECTED:
-				if (this.plugin.settings.notifications > 0) {
-					this.makeNotice(STATUS_OK, NotifyType.CONNECTED);
-				}
-				this.statusBarIcon.style.color = STATUS_OK;
-				this.setStatusMessage(NotifyType.CONNECTED, false);
-				break;
-		}
+		this.xNotify.makeStatusBarItem(statusbar);
 	}
 }
