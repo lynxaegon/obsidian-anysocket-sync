@@ -62,7 +62,6 @@ export default class XNotify {
 	}
 
 	makeNotice(color: string, text: string) {
-		console.log("XNotify: makeNotice called", { color, text });
 		let notice = (new Notice()).noticeEl;
 		let container = notice.createEl('span');
 		container.style.verticalAlign = "middle";
@@ -74,7 +73,6 @@ export default class XNotify {
 		icon.style.color = color;
 		icon.innerHTML = this.xSync.plugin.getSVGIcon();
 		container.createEl('span', { text: text });
-		console.log("XNotify: makeNotice created", notice);
 	}
 
 	setFromBackground(value: boolean) {
@@ -145,8 +143,6 @@ export default class XNotify {
 	}
 
 	handleConnectionLost(now: number, notifications: number) {
-		console.log("XNotify: handleConnectionLost", { notifications, isConnected: this.xSync.anysocket.isConnected });
-		
 		// Cancel any pending notifications
 		this.cancelPendingNotification();
 
@@ -155,21 +151,10 @@ export default class XNotify {
 		this.setStatusMessage(NotifyType.CONNECTION_LOST, false);
 
 		// Only show notification after 2 seconds if still disconnected
-		console.log("XNotify: Scheduling CONNECTION_LOST notification in 2 seconds");
 		this.notificationTimeout = setTimeout(() => {
-			console.log("XNotify: CONNECTION_LOST timeout fired", {
-				isConnected: this.xSync.anysocket.isConnected,
-				notifications
-			});
 			if (!this.xSync.anysocket.isConnected && notifications > 0) {
-				console.log("XNotify: Showing CONNECTION_LOST notification");
 				this.makeNotice(STATUS_ERROR, NotifyType.CONNECTION_LOST);
 				this.connectionLostShown = true;
-			} else {
-				console.log("XNotify: Skipping CONNECTION_LOST", {
-					isConnected: this.xSync.anysocket.isConnected,
-					notifications
-				});
 			}
 			this.notificationTimeout = null;
 		}, 2000);
@@ -183,39 +168,18 @@ export default class XNotify {
 		const isInitialConnection = this.lastNotification === null || 
 			this.lastNotification === NotifyType.PLUGIN_DISABLED;
 
-		console.log("XNotify: handleNotConnected", {
-			isInitialConnection,
-			lastNotification: this.lastNotification,
-			notifications,
-			isConnected: this.xSync.anysocket.isConnected,
-			hasPendingTimeout: !!this.notificationTimeout
-		});
-
 		// DON'T cancel pending CONNECTION_LOST notifications during reconnection attempts!
 		// Only cancel and schedule new notification for initial connection
 		if (isInitialConnection) {
-			console.log("XNotify: Initial connection - canceling any pending and scheduling NOT_CONNECTED");
 			this.cancelPendingNotification();
 			
 			this.notificationTimeout = setTimeout(() => {
-				console.log("XNotify: NOT_CONNECTED timeout fired", {
-					isConnected: this.xSync.anysocket.isConnected,
-					notifications
-				});
 				if (!this.xSync.anysocket.isConnected && notifications > 0) {
-					console.log("XNotify: Showing NOT_CONNECTED notification");
 					this.makeNotice(STATUS_ERROR, NotifyType.NOT_CONNECTED);
 					this.connectionLostShown = true;
-				} else {
-					console.log("XNotify: Skipping NOT_CONNECTED", {
-						isConnected: this.xSync.anysocket.isConnected,
-						notifications
-					});
 				}
 				this.notificationTimeout = null;
 			}, 2000);
-		} else {
-			console.log("XNotify: Reconnection attempt - keeping pending CONNECTION_LOST notification");
 		}
 
 		// Update status bar immediately
@@ -270,7 +234,6 @@ export default class XNotify {
 	}
 
 	cleanup() {
-		console.log("XNotify: cleanup() called");
 		clearTimeout(this.timeoutStatusMessage);
 		this.cancelPendingNotification();
 	}

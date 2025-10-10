@@ -267,9 +267,7 @@ export default class XSync {
 		this.anysocket.on("reload", this.reload.bind(this));
 		this.anysocket.on("unload", this.unload.bind(this));
 		this.anysocket.on("disconnected", () => {
-			console.log("XSync: disconnected event fired, calling notifyStatus(CONNECTION_LOST)");
 			this.xNotify.notifyStatus(NotifyType.CONNECTION_LOST);
-
 			this.debug && console.log("disconnected");
 		});
 
@@ -277,13 +275,11 @@ export default class XSync {
 	}
 
 	unload(cleanup = true) {
-		console.log("XSync: unload() called, cleanup =", cleanup);
 		clearTimeout(this.reloadTimeout);
 		
 		// Only cleanup notifications on full unload, not on reload
 		// Notification timeouts check connection state anyway
 		if (cleanup) {
-			console.log("XSync: calling xNotify.cleanup()");
 			this.xNotify.cleanup();
 		}
 
@@ -304,7 +300,6 @@ export default class XSync {
 	}
 
 	reload() {
-		console.log("XSync: reload() called");
 		this.debug && console.log("reloaded");
 		// Don't cleanup notifications on reload - let them run
 		this.unload(false);

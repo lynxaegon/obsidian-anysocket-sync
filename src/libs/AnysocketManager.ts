@@ -28,11 +28,9 @@ export default class AnysocketManager extends EventEmitter {
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
 		if (app.isMobile) {
 			activeWindow.onblur = () => {
-				console.log("AnysocketManager: Mobile onblur - emitting unload");
 				this.emit("unload");
 			};
 			activeWindow.onfocus = () => {
-				console.log("AnysocketManager: Mobile onfocus - emitting focus and reload");
 				this.emit("focus");
 				this.emit("reload");
 			};
