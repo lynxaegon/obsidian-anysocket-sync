@@ -20,6 +20,8 @@ export default class XSync {
 	storage: Storage;
 	reloadTimeout = null;
 	xNotify: XNotify;
+	deleteQueue: Record<string, any> = {}; // path -> delete event
+	isProcessingDeleteQueue: boolean = false;
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
@@ -98,6 +100,56 @@ export default class XSync {
 		});
 	}
 
+	async processDeleteQueue() {
+		if(!this.anysocket.isConnected) return;
+		
+		if(this.isProcessingDeleteQueue) {
+			return;
+		}
+		
+		const queuedPaths = Object.keys(this.deleteQueue);
+		if(queuedPaths.length === 0) return;
+
+		this.isProcessingDeleteQueue = true;
+
+		const itemsToProcess = {...this.deleteQueue};
+		const processedPaths: string[] = [];
+
+		try {
+			for(let path of queuedPaths) {
+				const deleteEvent = itemsToProcess[path];
+				try {
+					this.anysocket.peer.send({
+						type: "file_event",
+						data: {
+							...deleteEvent.metadata,
+							path: path
+						}
+					});
+					processedPaths.push(path);
+				} catch(e) {
+					console.error("Failed to send deletion event:", path, e);
+				}
+			}
+
+			for(let path of processedPaths) {
+				delete this.deleteQueue[path];
+			}
+			
+			await this.storage.saveDeleteQueue(this.deleteQueue);
+			
+			const remaining = Object.keys(this.deleteQueue).length;
+		} finally {
+			this.isProcessingDeleteQueue = false;
+			
+			if(Object.keys(this.deleteQueue).length > 0) {
+				this.processDeleteQueue().catch(e => {
+					console.error("Error in follow-up delete queue processing:", e);
+				});
+			}
+		}
+	}
+
 	async sync() {
 		if(!this.anysocket.isConnected) return;
 		if(this.isSyncing) return;
@@ -113,7 +165,8 @@ export default class XSync {
 		this.debug && console.log("sync");
 		let data = [];
 		
-		// Collect all existing files
+		// Collect all existing files (created/modified files only)
+		// Deletions are handled by the delete queue
 		await this.storage.iterate(async (item: any) => {
 			let mtime = null;
 			if (item.children === undefined) {
@@ -133,21 +186,6 @@ export default class XSync {
 				metadata: result.metadata
 			});
 		});
-		
-		// Include deleted files from metadata tree
-		for(let path in this.storage.tree) {
-			let metadata = this.storage.tree[path];
-			if(metadata.action === "deleted") {
-				// Check if not already in data (shouldn't exist, but safety check)
-				if(!data.find(item => item.path === path)) {
-					this.debug && console.log("sync: including deleted file", path);
-					data.push({
-						path: path,
-						metadata: metadata
-					});
-				}
-			}
-		}
 
 		this.anysocket.send({
 			type: "sync",
@@ -165,7 +203,7 @@ export default class XSync {
 	}
 
 	// create, modify, delete, rename
-	async processLocalEvent(action: string, file: TAbstractFile, args: any, fromUnsent: boolean = false) {
+	async processLocalEvent(action: string, file: TAbstractFile, args: any, fromUnsent: boolean = false, forceChanged: boolean = false) {
 		if(!this.plugin.settings.autoSync && !fromUnsent && this.anysocket.isConnected) {
 			this.unsentSessionEvents[file.path] = {
 				action: action,
@@ -176,46 +214,105 @@ export default class XSync {
 		}
 
 		if (action == "rename") {
-			await this.processLocalEvent("delete", {path: args[0]}, null, fromUnsent)
-			await this.processLocalEvent("create", file, null, fromUnsent);
+			const oldPath = args[0];
+			const oldMetadata = await this.storage.readMetadata(oldPath);
+			
+			if (oldMetadata) {
+				this.deleteQueue[oldPath] = {
+					action: "delete",
+					path: oldPath,
+					metadata: {
+						action: "deleted",
+						sha1: oldMetadata.sha1,
+						mtime: await this.anysocket.getTime(),
+						type: oldMetadata.type
+					},
+					timestamp: Date.now()
+				};
+			} else {
+				this.deleteQueue[oldPath] = {
+					action: "delete",
+					path: oldPath,
+					metadata: {
+						action: "deleted",
+						sha1: null,
+						mtime: await this.anysocket.getTime(),
+						type: "file"
+					},
+					timestamp: Date.now()
+				};
+			}
+			
+			await this.storage.saveDeleteQueue(this.deleteQueue);
+			
+			if(this.anysocket.isConnected) {
+				this.processDeleteQueue().catch(e => {
+					console.error("Error processing delete queue:", e);
+				});
+			}
+			
+			await this.processLocalEvent("create", file, null, fromUnsent, true);
 			return;
 		}
 
 		let metadata = await this.getMetadata(action, file);
 		
-		// Store metadata locally even when offline
-		// This ensures deletions are tracked for next sync
+		if (action == "delete") {
+			this.deleteQueue[file.path] = {
+				action: action,
+				path: file.path,
+				metadata: metadata.metadata,
+				timestamp: Date.now()
+			};
+			
+			await this.storage.saveDeleteQueue(this.deleteQueue);
+			
+			if(this.anysocket.isConnected) {
+				this.processDeleteQueue().catch(e => {
+					console.error("Error processing delete queue:", e);
+				});
+			}
+
+			return;
+		}
+		
 		if(!this.anysocket.isConnected) {
-			this.debug && console.log("offline event stored:", action, file.path);
-			// Metadata is already stored by getMetadata()
-			// Just don't send to server yet
 			return;
 		}
 		
 		if(action == "modify" && this.plugin.settings.delayedSync > 0) {
 			this.xTimeouts.set(file.path, this.plugin.settings.delayedSync * 1000, async () => {
-				await this._processLocalEvent(action, file, metadata);
+				await this._processLocalEvent(action, file, metadata, forceChanged);
 			});
 		}
 		else {
-			await this._processLocalEvent(action, file, metadata);
+			await this._processLocalEvent(action, file, metadata, forceChanged);
 		}
 	}
 
-	async _processLocalEvent(action: string, file: TAbstractFile, metadata: any) {
-		this.debug && console.log("anysocket sync event", action, file.path, metadata);
+	async _processLocalEvent(action: string, file: TAbstractFile, metadata: any, forceChanged: boolean = false) {
 		try {
 			let result = metadata || await this.getMetadata(action, file);
-			if (!result.changed || !this.anysocket.isConnected) {
+			
+			// Skip change detection if forceChanged is true (e.g., rename)
+			if (!forceChanged && !result.changed) {
 				return;
 			}
+			
+			if (!this.anysocket.isConnected) {
+				return;
+			}
+			
+			this.debug && console.log("Sending file event:", action, file.path);
 			result.metadata.path = file.path;
-			this.anysocket.send({
+			this.anysocket.peer.send({
 				type: "file_event",
 				data: result.metadata
+			}).catch(e => {
+				console.error("Failed to send file event:", file.path, e);
 			});
 		} catch (e) {
-			console.error(e);
+			console.error("Error in _processLocalEvent:", e);
 		}
 	}
 
@@ -244,6 +341,8 @@ export default class XSync {
 		this.debug = this.plugin.settings.debug;
 
 		await this.storage.init();
+		
+		this.deleteQueue = await this.storage.loadDeleteQueue();
 
 		this.registerEvent("create");
 		this.registerEvent("modify");
@@ -263,6 +362,10 @@ export default class XSync {
 			}
 			if(!this.plugin.settings.autoSync) {
 				await peer.rpc.autoSync(this.plugin.settings.autoSync);
+			}
+
+			if(Object.keys(this.deleteQueue).length > 0) {
+				await this.processDeleteQueue();
 			}
 
 			if(this.plugin.settings.autoSync) {

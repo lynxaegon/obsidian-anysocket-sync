@@ -7,6 +7,7 @@ export default class Storage {
 	fsVault: FSAdapter;
 	fsInternal: FSAdapter;
 	private inited = false;
+	private deleteQueueFile = "sync-delete-queue.json";
 
 	constructor(plugin) {
 		this.fsVault = new FSAdapter(normalizePath("/"));
@@ -19,6 +20,34 @@ export default class Storage {
 
 		this.tree = {};
 		this.inited = true;
+	}
+
+	async loadDeleteQueue() {
+		try {
+			const queueJson = await this.fsInternal.read(this.deleteQueueFile);
+			if(queueJson) {
+				return JSON.parse(queueJson);
+			}
+		} catch(e) {
+			// Queue doesn't exist or is corrupted
+		}
+		return {};
+	}
+
+	async saveDeleteQueue(queue: Record<string, any>) {
+		try {
+			await this.fsInternal.write(this.deleteQueueFile, JSON.stringify(queue, null, 2));
+		} catch(e) {
+			console.error("Failed to save delete queue:", e);
+		}
+	}
+
+	async clearDeleteQueue() {
+		try {
+			await this.fsInternal.write(this.deleteQueueFile, JSON.stringify({}, null, 2));
+		} catch(e) {
+			console.error("Failed to clear delete queue:", e);
+		}
 	}
 
 	async write(path: string, data: string, metadata: any) {
