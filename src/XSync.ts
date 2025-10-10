@@ -112,6 +112,8 @@ export default class XSync {
 		this.xNotify.notifyStatus(NotifyType.SYNCING);
 		this.debug && console.log("sync");
 		let data = [];
+		
+		// Collect all existing files
 		await this.storage.iterate(async (item: any) => {
 			let mtime = null;
 			if (item.children === undefined) {
@@ -131,6 +133,21 @@ export default class XSync {
 				metadata: result.metadata
 			});
 		});
+		
+		// Include deleted files from metadata tree
+		for(let path in this.storage.tree) {
+			let metadata = this.storage.tree[path];
+			if(metadata.action === "deleted") {
+				// Check if not already in data (shouldn't exist, but safety check)
+				if(!data.find(item => item.path === path)) {
+					this.debug && console.log("sync: including deleted file", path);
+					data.push({
+						path: path,
+						metadata: metadata
+					});
+				}
+			}
+		}
 
 		this.anysocket.send({
 			type: "sync",
@@ -149,11 +166,7 @@ export default class XSync {
 
 	// create, modify, delete, rename
 	async processLocalEvent(action: string, file: TAbstractFile, args: any, fromUnsent: boolean = false) {
-		if(!this.anysocket.isConnected) {
-			return;
-		}
-
-		if(!this.plugin.settings.autoSync && !fromUnsent) {
+		if(!this.plugin.settings.autoSync && !fromUnsent && this.anysocket.isConnected) {
 			this.unsentSessionEvents[file.path] = {
 				action: action,
 				file: file,
@@ -169,6 +182,16 @@ export default class XSync {
 		}
 
 		let metadata = await this.getMetadata(action, file);
+		
+		// Store metadata locally even when offline
+		// This ensures deletions are tracked for next sync
+		if(!this.anysocket.isConnected) {
+			this.debug && console.log("offline event stored:", action, file.path);
+			// Metadata is already stored by getMetadata()
+			// Just don't send to server yet
+			return;
+		}
+		
 		if(action == "modify" && this.plugin.settings.delayedSync > 0) {
 			this.xTimeouts.set(file.path, this.plugin.settings.delayedSync * 1000, async () => {
 				await this._processLocalEvent(action, file, metadata);
@@ -363,21 +386,31 @@ export default class XSync {
 			"delete": "deleted"
 		}
 
+		// Get stored metadata first (needed for deletions)
+		let storedMetadata = await this.storage.readMetadata(file.path);
+
 		let itemType;
 		let itemData;
+		let sha1;
+		
 		if (action == "restore") {
 			itemData = file.data;
 			itemType = "file";
+			sha1 = isBinary ? await Utils.getSHABinary(itemData) : await Utils.getSHA(itemData);
+		} else if (action == "delete") {
+			// File is already deleted, can't read it
+			// Preserve the last known SHA1 from stored metadata
+			itemType = file.stat ? "file" : (storedMetadata ? storedMetadata.type : "file");
+			sha1 = storedMetadata ? storedMetadata.sha1 : null;
 		} else {
 			itemData = isBinary ? await this.storage.readBinary(file.path) : await this.storage.read(file.path);
 			itemType = file.stat ? "file" : "folder";
+			sha1 = isBinary ? await Utils.getSHABinary(itemData) : await Utils.getSHA(itemData);
 		}
 
 		let metadata = {
 			action: typeToAction[action],
-			sha1: isBinary ?
-				await Utils.getSHABinary(itemData) :
-				await Utils.getSHA(itemData),
+			sha1: sha1,
 			mtime: itemTime || await this.anysocket.getTime(),
 			type: itemType
 		};
@@ -388,7 +421,6 @@ export default class XSync {
 
 		// if the storedMetadata (sha1) is the same as the current one
 		// this means that we just wrote this file, so we skip
-		let storedMetadata = await this.storage.readMetadata(file.path);
 		if (storedMetadata && metadata.action == storedMetadata.action && metadata.sha1 == storedMetadata.sha1) {
 			return {
 				changed: false,
