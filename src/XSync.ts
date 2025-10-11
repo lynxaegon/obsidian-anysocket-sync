@@ -167,7 +167,7 @@ export default class XSync {
 
 		for(let key in this.unsentSessionEvents) {
 			let event = this.unsentSessionEvents[key];
-			await this.processLocalEvent(event.action, event.file, event.args, true);
+			await this._processLocalEvent(event.action, event.file, event.metadata, false);
 		}
 		this.unsentSessionEvents = {};
 
@@ -214,16 +214,7 @@ export default class XSync {
 	}
 
 	// create, modify, delete, rename
-	async processLocalEvent(action: string, file: TAbstractFile, args: any, fromUnsent: boolean = false, forceChanged: boolean = false) {
-		if(!this.plugin.settings.autoSync && !fromUnsent && this.anysocket.isConnected) {
-			this.unsentSessionEvents[file.path] = {
-				action: action,
-				file: file,
-				args: args
-			};
-			return;
-		}
-
+	async processLocalEvent(action: string, file: TAbstractFile, args: any, forceChanged: boolean = false) {
 		// If creating or modifying a file that's in the delete queue, remove it
 		if ((action == "create" || action == "modify") && this.deleteQueue[file.path]) {
 			delete this.deleteQueue[file.path];
@@ -268,12 +259,11 @@ export default class XSync {
 				});
 			}
 			
-			await this.processLocalEvent("create", file, null, fromUnsent, true);
+			await this.processLocalEvent("create", file, null, true);
 			return;
 		}
 
 		let metadata = await this.getMetadata(action, file);
-		
 		if (action == "delete") {
 			this.deleteQueue[file.path] = {
 				action: action,
@@ -292,8 +282,14 @@ export default class XSync {
 
 			return;
 		}
-		
-		if(!this.anysocket.isConnected) {
+
+		// Queue events if autoSync is disabled or not connected
+		if(!this.plugin.settings.autoSync || !this.anysocket.isConnected) {
+			this.unsentSessionEvents[file.path] = {
+				action: action,
+				file: file,
+				metadata: metadata
+			};
 			return;
 		}
 		
@@ -310,7 +306,6 @@ export default class XSync {
 	async _processLocalEvent(action: string, file: TAbstractFile, metadata: any, forceChanged: boolean = false) {
 		try {
 			let result = metadata || await this.getMetadata(action, file);
-			
 			// Skip change detection if forceChanged is true (e.g., rename)
 			if (!forceChanged && !result.changed) {
 				return;
@@ -460,16 +455,19 @@ export default class XSync {
 
 		if (data.type == "send") {
 			let isBinary = Utils.isBinary(data.path);
+			const fileData = isBinary ? 
+				await this.storage.readBinary(data.path) : 
+				await this.storage.read(data.path);
+			const metadata = await this.storage.readMetadata(data.path);
+
 			this.anysocket.send({
 				type: "file_data",
 				data: {
 					type: "apply",
 					binary: isBinary,
-					data: isBinary ?
-						AnySocket.Packer.pack(await this.storage.readBinary(data.path)) :
-						await this.storage.read(data.path),
+					data: isBinary ? AnySocket.Packer.pack(fileData) : fileData,
 					path: data.path,
-					metadata: await this.storage.readMetadata(data.path)
+					metadata: metadata
 				}
 			});
 		} else if (data.type == "apply") {
