@@ -1,5 +1,5 @@
 // @ts-nocheck
-import {Notice, Plugin} from "obsidian";
+import {Notice, Platform, Plugin} from "obsidian";
 import Utils from "./Utils";
 import XSync from "../XSync";
 import {NotifyType} from "./XNotify";
@@ -26,12 +26,11 @@ export default class AnysocketManager extends EventEmitter {
 		this.anysocket = new AnySocket();
 
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
-		if (app.isMobile) {
+		if (Platform.isMobile) {
 			activeWindow.onblur = () => {
 				this.emit("unload");
 			};
 			activeWindow.onfocus = () => {
-				this.emit("focus");
 				this.emit("reload");
 			};
 		}
@@ -127,10 +126,15 @@ export default class AnysocketManager extends EventEmitter {
 			peer.e2e();
 			this.notifiedOfConnectError = false;
 		}).catch((e) => {
-			console.error("AnySocket Connect Error", e);
-			if(!this.notifiedOfConnectError && !this.isUpdating) {
-				this.notifiedOfConnectError = true;
-				this.xSync.xNotify.notifyStatus(NotifyType.NOT_CONNECTED);
+			try {
+				console.error("AnySocket Connect Error", e);
+				if (!this.notifiedOfConnectError && !this.isUpdating) {
+					this.notifiedOfConnectError = true;
+					this.xSync.xNotify.notifyStatus(NotifyType.NOT_CONNECTED);
+				}
+			}
+			catch(e) {
+				console.log("Error", e);
 			}
 			this.isConnected = false;
 			this.emit("reload");

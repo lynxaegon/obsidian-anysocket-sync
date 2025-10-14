@@ -36,10 +36,9 @@ export default class XSync {
 		if (this.isEnabled !== value) {
 			this.isEnabled = value;
 			if (this.isEnabled) {
-				await this.load(false);
+				await this.load();
 			} else {
-				// Full cleanup when disabling
-				this.unload(true);
+				this.unload();
 			}
 		}
 	}
@@ -398,10 +397,6 @@ export default class XSync {
 					break;
 			}
 		});
-		this.anysocket.on("focus", () => {
-			// Mark that we're resuming from background
-			this.xNotify.setFromBackground(true);
-		});
 		this.anysocket.on("reload", this.reload.bind(this));
 		this.anysocket.on("unload", this.unload.bind(this));
 		this.anysocket.on("disconnected", () => {
@@ -412,14 +407,8 @@ export default class XSync {
 		this.anysocket.init();
 	}
 
-	unload(cleanup = true) {
+	unload() {
 		clearTimeout(this.reloadTimeout);
-		
-		// Only cleanup notifications on full unload, not on reload
-		// Notification timeouts check connection state anyway
-		if (cleanup) {
-			this.xNotify.cleanup();
-		}
 
 		if (this.inited == false)
 			return;
@@ -439,8 +428,7 @@ export default class XSync {
 
 	reload() {
 		this.debug && console.log("reloaded");
-		// Don't cleanup notifications on reload - let them run
-		this.unload(false);
+		this.unload();
 		this.reloadTimeout = setTimeout(() => {
 			this.load();
 		}, 1000);

@@ -25,12 +25,9 @@ export default class XNotify {
 	mobileIndicator: any = null;
 	mobileIndicatorIcon: any = null;
 
-	// Notification state tracking
-	lastNotification: string | null = null;
-	lastNotificationTime: number = 0;
-	notificationTimeout: any = null;
-	connectionLostShown: boolean = false;
-	isFromBackground: boolean = false;
+	current: any = null;
+	lastNotificationType: string | null = null;
+	pendingNotificationTimeout: any = null;
 
 	constructor(xSync: any) {
 		this.xSync = xSync;
@@ -72,53 +69,34 @@ export default class XNotify {
 	}
 
 	makeNotice(color: string, text: string) {
-		let notice = (new Notice()).noticeEl;
-		let container = notice.createEl('span');
-		container.style.verticalAlign = "middle";
-		container.style.display = "inline-flex";
-		container.style.alignItems = "center";
-
-		let icon = container.createEl('span');
-		icon.style.paddingRight = "4px";
-		icon.style.color = color;
-		icon.innerHTML = this.xSync.plugin.getSVGIcon();
-		container.createEl('span', { text: text });
+		this.showNotification(color, text, 2000);
 	}
 
-	setFromBackground(value: boolean) {
-		this.isFromBackground = value;
-		this.xSync.debug && console.log("XNotify: isFromBackground =", value);
+	private showNotification(color: string, text: string, delay: number = 0) {
+		if(this.lastNotificationType == text && this.pendingNotificationTimeout != null)
+			return;
+
+		this.lastNotificationType = text;
+		clearTimeout(this.pendingNotificationTimeout);
+		this.pendingNotificationTimeout = setTimeout(() => {
+			let notice = (new Notice()).noticeEl;
+			let container = notice.createEl('span');
+			container.style.verticalAlign = "middle";
+			container.style.display = "inline-flex";
+			container.style.alignItems = "center";
+
+			let icon = container.createEl('span');
+			icon.style.paddingRight = "4px";
+			icon.style.color = color;
+			icon.innerHTML = this.xSync.plugin.getSVGIcon();
+			container.createEl('span', {text: text});
+
+			this.pendingNotificationTimeout = null;
+		}, delay);
 	}
 
 	notifyStatus(type: string) {
-		this.xSync.debug && console.log("XNotify: notifyStatus", type, {
-			lastNotification: this.lastNotification,
-			connectionLostShown: this.connectionLostShown,
-			isFromBackground: this.isFromBackground
-		});
-
-		const now = Date.now();
 		const notifications = this.xSync.plugin.settings.notifications;
-
-		// Handle connection state notifications specially
-		if (type === NotifyType.CONNECTION_LOST) {
-			this.handleConnectionLost(now, notifications);
-			return;
-		}
-
-		if (type === NotifyType.NOT_CONNECTED) {
-			this.handleNotConnected(now, notifications);
-			return;
-		}
-
-		if (type === NotifyType.CONNECTED) {
-			this.handleConnected(now, notifications);
-			return;
-		}
-
-		// Handle other notifications normally
-		this.lastNotification = type;
-		this.lastNotificationTime = now;
 
 		switch (type) {
 			case NotifyType.PLUGIN_DISABLED:
@@ -128,6 +106,30 @@ export default class XNotify {
 				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_ERROR;
 				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_ERROR;
 				this.setStatusMessage(NotifyType.PLUGIN_DISABLED, false);
+				break;
+			case NotifyType.CONNECTION_LOST:
+				if (notifications > 0) {
+					this.makeNotice(STATUS_ERROR, NotifyType.CONNECTION_LOST);
+				}
+				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_ERROR;
+				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_ERROR;
+				this.setStatusMessage(NotifyType.CONNECTION_LOST, false);
+				break;
+			case NotifyType.NOT_CONNECTED:
+				if (notifications > 0) {
+					this.makeNotice(STATUS_ERROR, NotifyType.NOT_CONNECTED);
+				}
+				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_ERROR;
+				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_ERROR;
+				this.setStatusMessage(NotifyType.NOT_CONNECTED, false);
+				break;
+			case NotifyType.CONNECTED:
+				if (notifications > 0) {
+					this.makeNotice(STATUS_OK, NotifyType.CONNECTED);
+				}
+				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_OK;
+				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_OK;
+				this.setStatusMessage(NotifyType.CONNECTED, false);
 				break;
 			case NotifyType.SYNCING:
 				if (notifications > 1) {
@@ -156,101 +158,12 @@ export default class XNotify {
 		}
 	}
 
-	handleConnectionLost(now: number, notifications: number) {
-		// Cancel any pending notifications
-		this.cancelPendingNotification();
-
-		// Update status bar immediately
-		if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_ERROR;
-		this.setStatusMessage(NotifyType.CONNECTION_LOST, false);
-
-		// Only show notification after 2 seconds if still disconnected
-		this.notificationTimeout = setTimeout(() => {
-			if (!this.xSync.anysocket.isConnected && notifications > 0) {
-				this.makeNotice(STATUS_ERROR, NotifyType.CONNECTION_LOST);
-				this.connectionLostShown = true;
-			}
-			this.notificationTimeout = null;
-		}, 2000);
-
-		this.lastNotification = NotifyType.CONNECTION_LOST;
-		this.lastNotificationTime = now;
-	}
-
-	handleNotConnected(now: number, notifications: number) {
-		// Only show on initial connection failure (not during reconnection)
-		const isInitialConnection = this.lastNotification === null || 
-			this.lastNotification === NotifyType.PLUGIN_DISABLED;
-
-		// DON'T cancel pending CONNECTION_LOST notifications during reconnection attempts!
-		// Only cancel and schedule new notification for initial connection
-		if (isInitialConnection) {
-			this.cancelPendingNotification();
-			
-			this.notificationTimeout = setTimeout(() => {
-				if (!this.xSync.anysocket.isConnected && notifications > 0) {
-					this.makeNotice(STATUS_ERROR, NotifyType.NOT_CONNECTED);
-					this.connectionLostShown = true;
-				}
-				this.notificationTimeout = null;
-			}, 2000);
-		}
-
-		// Update status bar immediately
-		if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_ERROR;
-		if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_ERROR;
-		this.setStatusMessage(NotifyType.NOT_CONNECTED, false);
-
-		this.lastNotification = NotifyType.NOT_CONNECTED;
-		this.lastNotificationTime = now;
-	}
-
-	handleConnected(now: number, notifications: number) {
-		// Cancel any pending notifications
-		this.cancelPendingNotification();
-
-		// Update status bar immediately
-		if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_OK;
-		if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_OK;
-		this.setStatusMessage(NotifyType.CONNECTED, false);
-
-		// Show "Connected" notification only if:
-		// 1. Connection lost was actually shown to user
-		// 2. NOT from background resume
-		// 3. Notifications enabled
-		const shouldShowConnected = this.connectionLostShown && 
-			!this.isFromBackground && 
-			notifications > 0;
-
-		this.xSync.debug && console.log("XNotify: CONNECTED", {
-			connectionLostShown: this.connectionLostShown,
-			isFromBackground: this.isFromBackground,
-			shouldShowConnected: shouldShowConnected
-		});
-
-		if (shouldShowConnected) {
-			this.makeNotice(STATUS_OK, NotifyType.CONNECTED);
-		}
-
-		// Reset state
-		this.connectionLostShown = false;
-		this.isFromBackground = false;
-		this.lastNotification = NotifyType.CONNECTED;
-		this.lastNotificationTime = now;
-	}
-
-	cancelPendingNotification() {
-		if (this.notificationTimeout) {
-			clearTimeout(this.notificationTimeout);
-			this.notificationTimeout = null;
-			// If we cancel a pending notification, it was never shown
-			this.connectionLostShown = false;
-			this.xSync.debug && console.log("XNotify: Cancelled pending notification");
-		}
-	}
-
 	cleanup() {
 		clearTimeout(this.timeoutStatusMessage);
+		if (this.pendingNotificationTimeout) {
+			clearTimeout(this.pendingNotificationTimeout);
+			this.pendingNotificationTimeout = null;
+		}
 		this.cancelPendingNotification();
 	}
 }
