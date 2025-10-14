@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Notice } from "obsidian";
+import {Notice, Platform} from "obsidian";
 
 const STATUS_OK = "#339933";
 const STATUS_SYNC = "#9900ff";
@@ -22,7 +22,9 @@ export default class XNotify {
 	statusBarIcon: any = null;
 	statusBarMessage: any = null;
 	timeoutStatusMessage: any = null;
-	
+	mobileIndicator: any = null;
+	mobileIndicatorIcon: any = null;
+
 	// Notification state tracking
 	lastNotification: string | null = null;
 	lastNotificationTime: number = 0;
@@ -46,6 +48,14 @@ export default class XNotify {
 		this.statusBarIcon.style.color = STATUS_ERROR;
 		this.statusBarIcon.innerHTML = this.xSync.plugin.getSVGIcon();
 		this.statusBarMessage = container.createEl('span');
+
+		if(Platform.isMobile) {
+			this.mobileIndicator = document.querySelector(".app-container").createEl('div');
+			this.mobileIndicator.addClass('anysocket-mobile-indicator');
+			this.mobileIndicatorIcon = this.mobileIndicator.createEl('span');
+			this.mobileIndicatorIcon.style.color = STATUS_ERROR;
+			this.mobileIndicatorIcon.innerHTML = this.xSync.plugin.getSVGIcon();
+		}
 	}
 
 	setStatusMessage(message: string, keep: boolean = false) {
@@ -116,6 +126,7 @@ export default class XNotify {
 					this.makeNotice(STATUS_ERROR, NotifyType.PLUGIN_DISABLED);
 				}
 				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_ERROR;
+				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_ERROR;
 				this.setStatusMessage(NotifyType.PLUGIN_DISABLED, false);
 				break;
 			case NotifyType.SYNCING:
@@ -123,6 +134,7 @@ export default class XNotify {
 					this.makeNotice(STATUS_SYNC, NotifyType.SYNCING);
 				}
 				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_SYNC;
+				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_SYNC;
 				this.setStatusMessage(NotifyType.SYNCING, true);
 				break;
 			case NotifyType.SYNC_COMPLETED:
@@ -130,6 +142,7 @@ export default class XNotify {
 					this.makeNotice(STATUS_OK, NotifyType.SYNC_COMPLETED);
 				}
 				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_OK;
+				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_OK;
 				this.setStatusMessage(NotifyType.SYNC_COMPLETED, false);
 				break;
 			case NotifyType.AUTO_SYNC_DISABLED:
@@ -137,6 +150,7 @@ export default class XNotify {
 					this.makeNotice(STATUS_WARN, NotifyType.AUTO_SYNC_DISABLED);
 				}
 				if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_WARN;
+				if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_WARN;
 				this.setStatusMessage(NotifyType.AUTO_SYNC_DISABLED, false);
 				break;
 		}
@@ -184,6 +198,7 @@ export default class XNotify {
 
 		// Update status bar immediately
 		if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_ERROR;
+		if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_ERROR;
 		this.setStatusMessage(NotifyType.NOT_CONNECTED, false);
 
 		this.lastNotification = NotifyType.NOT_CONNECTED;
@@ -196,6 +211,7 @@ export default class XNotify {
 
 		// Update status bar immediately
 		if (this.statusBarIcon) this.statusBarIcon.style.color = STATUS_OK;
+		if (this.mobileIndicatorIcon) this.mobileIndicatorIcon.style.color = STATUS_OK;
 		this.setStatusMessage(NotifyType.CONNECTED, false);
 
 		// Show "Connected" notification only if:
@@ -238,4 +254,3 @@ export default class XNotify {
 		this.cancelPendingNotification();
 	}
 }
-
