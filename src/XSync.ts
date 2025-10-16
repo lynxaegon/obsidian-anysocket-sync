@@ -173,29 +173,17 @@ export default class XSync {
 		this.isSyncing = true;
 		this.xNotify.notifyStatus(NotifyType.SYNCING);
 		this.debug && console.log("sync");
-		let data = [];
-		
-		// Collect all existing files (created/modified files only)
-		// Deletions are handled by the delete queue
-		await this.storage.iterate(async (item: any) => {
-			let mtime = null;
-			if (item.children === undefined) {
-				mtime = item.stat.mtime;
-			}
-			else {
-				mtime = await this.getFolderMtime(item);
-				// skip empty folders
-				if(mtime === false) {
-					return;
-				}
-			}
 
-			let result = await this.getMetadata("sync", item, mtime);
+		await this.storage.computeTree();
+
+		let data = [];
+		for (const path in this.storage.tree) {
+			const metadata = this.storage.tree[path];
 			data.push({
-				path: item.path,
-				metadata: result.metadata
+				path,
+				metadata
 			});
-		});
+		}
 
 		this.anysocket.send({
 			type: "sync",
@@ -214,7 +202,6 @@ export default class XSync {
 
 	// create, modify, delete, rename
 	async processLocalEvent(action: string, file: TAbstractFile, args: any, forceChanged: boolean = false) {
-		// If creating or modifying a file that's in the delete queue, remove it
 		if ((action == "create" || action == "modify") && this.deleteQueue[file.path]) {
 			delete this.deleteQueue[file.path];
 			await this.storage.saveDeleteQueue(this.deleteQueue);
@@ -540,32 +527,6 @@ export default class XSync {
 			changed: true,
 			metadata: metadata
 		};
-	}
-
-	async getFolderMtime(file) {
-		if(file.stat) {
-			return file.stat.mtime;
-		}
-
-		if(file.children.length <= 0) {
-			return false;
-		}
-
-		let hasValue = false;
-		let minMtime = await this.anysocket.getTime();
-		for(let child of file.children) {
-			let mtime = await this.getFolderMtime(child);
-			if(mtime == false) {
-				continue;
-			}
-
-			if(minMtime > mtime) {
-				hasValue = true;
-				minMtime = mtime;
-			}
-		}
-
-		return hasValue ? minMtime : false;
 	}
 
 	makeStatusBarItem(statusbar: any) {

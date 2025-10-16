@@ -56,6 +56,10 @@ export default class FSAdapter {
 		await app.fileManager.trashFile(this.getFile(path));
 	}
 
+	async forceDelete(path: string) {
+		return await app.vault.adapter.remove(normalizePath(this.basePath + path));
+	}
+
 	async iterate(callback) {
 		let files = app.vault.getAllLoadedFiles();
 		for(let file of files) {

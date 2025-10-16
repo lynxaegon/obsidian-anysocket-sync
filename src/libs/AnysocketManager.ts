@@ -103,16 +103,16 @@ export default class AnysocketManager extends EventEmitter {
 
 			app.plugins.disablePlugin("anysocket-sync");
 			if(this.plugin.BUILD >= result.build) {
-				this.xSync.xNotify.makeNotice(NOTICE_COLOR, "Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
+				this.xSync.xNotify.showNotification(NOTICE_COLOR, "Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
 			}
 			else {
-				this.xSync.xNotify.makeNotice(NOTICE_COLOR, "Updated to version: " + result.version);
+				this.xSync.xNotify.showNotification(NOTICE_COLOR, "Updated to version: " + result.version);
 			}
 			app.plugins.enablePlugin("anysocket-sync");
 		} else {
 			this.anysocket.removeAllListeners();
 			this.emit("unload");
-			this.xSync.xNotify.makeNotice(NOTICE_COLOR, "Incompatible client version " + this.plugin.VERSION);
+			this.xSync.xNotify.showNotification(NOTICE_COLOR, "Incompatible client version " + this.plugin.VERSION);
 		}
 	}
 
@@ -123,7 +123,7 @@ export default class AnysocketManager extends EventEmitter {
 
 		if(!this.plugin.settings.password) {
 			console.log("AnySocket Sync - Requires setup");
-			this.xSync.xNotify.makeNotice(NOTICE_COLOR, "AnySocket Sync - Requires setup");
+			this.xSync.xNotify.showNotification(NOTICE_COLOR, "AnySocket Sync - Requires setup");
 			this.emit("unload");
 			return;
 		}

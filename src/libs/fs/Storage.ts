@@ -1,6 +1,7 @@
 // @ts-nocheck
 import FSAdapter from "./FSAdapter";
 import {normalizePath} from "obsidian";
+import Utils from "../Utils";
 
 export default class Storage {
 	static tree: any = null;
@@ -8,10 +9,15 @@ export default class Storage {
 	fsInternal: FSAdapter;
 	private inited = false;
 	private deleteQueueFile = "sync-delete-queue.json";
+	private metadataFile = "metadata.json";
+	private throttledWriteTimeout: any = null;
+	private lastWriteTime: number = 0;
+	getTime: () => Promise<number>;
 
-	constructor(plugin) {
+	constructor(plugin, getTime?: () => Promise<number>) {
 		this.fsVault = new FSAdapter(normalizePath("/"));
 		this.fsInternal = new FSAdapter(plugin.manifest.dir + "/");
+		this.getTime = getTime || (async () => Date.now());
 	}
 
 	async init() {
@@ -20,6 +26,15 @@ export default class Storage {
 
 		this.tree = {};
 		this.inited = true;
+
+		try {
+			const metaJson = await this.fsInternal.read(this.metadataFile);
+			if(metaJson) {
+				this.tree = JSON.parse(metaJson);
+			}
+		} catch(e) {
+			// Ignore if not found/corrupted
+		}
 	}
 
 	async loadDeleteQueue() {
@@ -39,14 +54,6 @@ export default class Storage {
 			await this.fsInternal.write(this.deleteQueueFile, JSON.stringify(queue, null, 2));
 		} catch(e) {
 			console.error("Failed to save delete queue:", e);
-		}
-	}
-
-	async clearDeleteQueue() {
-		try {
-			await this.fsInternal.write(this.deleteQueueFile, JSON.stringify({}, null, 2));
-		} catch(e) {
-			console.error("Failed to clear delete queue:", e);
 		}
 	}
 
@@ -99,15 +106,76 @@ export default class Storage {
 		return this.tree[path];
 	}
 
-	async writeMetadata(path: string, metadata: any) {
-		if(!this.tree[path]) {
-			this.tree[path] = {};
+	private scheduleThrottledWrite() {
+		const now = Date.now();
+		if (now - this.lastWriteTime < 500) {
+			clearTimeout(this.throttledWriteTimeout);
+			this.throttledWriteTimeout = setTimeout(() => {
+				this.writeMetadataFile();
+			}, 500 - (now - this.lastWriteTime));
+		} else {
+			this.writeMetadataFile();
 		}
-		for(let key in metadata) {
-			this.tree[path][key] = metadata[key];
-		}
+	}
 
-		return this.tree[path];
+	private async writeMetadataFile() {
+		try {
+			await this.fsInternal.write(this.metadataFile, JSON.stringify(this.tree, null, 2));
+			this.lastWriteTime = Date.now();
+		} catch(e) {
+			console.error("Failed to write metadata.json:", e);
+		}
+	}
+
+	public async dropMetadata() {
+		try {
+			await this.fsInternal.forceDelete(this.metadataFile);
+		} catch(e) {
+			console.error("Failed to drop metadata.json:", e);
+		}
+	}
+
+	async writeMetadata(path: string, metadata: any) {
+		this.tree[path] = metadata;
+		this.scheduleThrottledWrite();
+	}
+
+	async computeTree() {
+		const seenPaths = new Set<string>();
+		const offset = (await this.getTime()) - Date.now();
+		await this.fsVault.iterate(async (item) => {
+			if(item.path == "/") return;
+			seenPaths.add(item.path);
+			const stat = item.stat;
+			const stored = this.tree[item.path];
+			let meta: any = { type: stat ? "file" : "folder" };
+			if (meta.type === "folder") {
+				const mtime = await this.getFolderMTime(item, offset);
+				if (mtime === false) return; // skip empty folders
+				meta.mtime = mtime;
+				if (stored && stored.mtime === mtime) return; // unchanged folder
+			} else {
+				if (stored && stored.mtime === stat.mtime + offset) return; // unchanged file
+				try {
+					const isBinary = Utils.isBinary(item.path);
+					const data = isBinary ? await this.fsVault.read(item.path, true) : await this.fsVault.read(item.path);
+					meta.sha1 = isBinary ? await Utils.getSHABinary(data) : await Utils.getSHA(data);
+					meta.mtime = stat.mtime + offset; // adjust local mtime to server time
+				} catch(e) {
+					console.error("Failed to update metadata for", item.path, e);
+					return;
+				}
+			}
+			meta.action = "created";
+			this.tree[item.path] = meta;
+			this.scheduleThrottledWrite();
+		});
+		for (const path in this.tree) {
+			if (!seenPaths.has(path)) {
+				delete this.tree[path];
+				this.scheduleThrottledWrite();
+			}
+		}
 	}
 
 	async updatePlugin(files) {
@@ -121,5 +189,27 @@ export default class Storage {
 			path = path.substring(1);
 		}
 		return this.fsVault.getFile(path);
+	}
+
+	async getFolderMTime(file, offset = 0) {
+		if (file.stat) {
+			return file.stat.mtime + offset;
+		}
+		if (!file.children || file.children.length <= 0) {
+			return false;
+		}
+		let hasValue = false;
+		let minMtime = Infinity;
+		for (let child of file.children) {
+			let mtime = await this.getFolderMTime(child, offset);
+			if (mtime === false) {
+				continue;
+			}
+			if (minMtime > mtime) {
+				hasValue = true;
+				minMtime = mtime;
+			}
+		}
+		return hasValue ? minMtime : false;
 	}
 }

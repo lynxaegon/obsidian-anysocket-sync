@@ -69,13 +69,13 @@ export default class XNotify {
 	}
 
 	makeNotice(color: string, text: string) {
-		this.showNotification(color, text, 2000);
-	}
-
-	private showNotification(color: string, text: string, delay: number = 0) {
 		if(this.lastNotificationType == text && this.pendingNotificationTimeout != null)
 			return;
 
+		this.showNotification(color, text, 2000);
+	}
+
+	public showNotification(color: string, text: string, delay: number = 0) {
 		this.lastNotificationType = text;
 		clearTimeout(this.pendingNotificationTimeout);
 		this.pendingNotificationTimeout = setTimeout(() => {

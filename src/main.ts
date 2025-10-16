@@ -283,5 +283,17 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		new Setting(containerEl)
+			.setName('Rebuild index')
+			.setDesc("It will reindex all the files in the vault")
+			.addButton(button => button
+				.setButtonText('Rebuild')
+				.onClick(async () => {
+					await this.plugin.xSync.storage.dropMetadata();
+					this.plugin.xSync.reload();
+					this.plugin.xSync.xNotify.showNotification('#ffaa00', "Rebuilding index");
+				})
+			);
 	}
 }
