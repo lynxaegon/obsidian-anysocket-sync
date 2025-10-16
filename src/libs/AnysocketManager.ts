@@ -1,5 +1,5 @@
 // @ts-nocheck
-import {Notice, Platform, Plugin} from "obsidian";
+import {Platform, Plugin} from "obsidian";
 import Utils from "./Utils";
 import XSync from "../XSync";
 import {NotifyType} from "./XNotify";
@@ -13,6 +13,7 @@ export default class AnysocketManager extends EventEmitter {
 	xSync: XSync;
 	eventRefs: any = {};
 	anysocket: any;
+	isBackground: boolean = false;
 	isConnected: boolean = false;
 	isUpdating: boolean = false;
 	notifiedOfConnectError = false;
@@ -27,12 +28,14 @@ export default class AnysocketManager extends EventEmitter {
 
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
 		if (Platform.isMobile) {
-			activeWindow.onblur = () => {
-				this.emit("unload");
-			};
-			activeWindow.onfocus = () => {
-				this.emit("reload");
-			};
+			document.addEventListener("visibilitychange", () => {
+				this.isBackground = document.hidden;
+				if (this.isBackground) {
+					this.emit("unload");
+				} else {
+					this.emit("reload");
+				}
+			});
 		}
 	}
 
@@ -41,14 +44,10 @@ export default class AnysocketManager extends EventEmitter {
 	}
 
 	async init() {
-		// Stop any existing connection to prevent duplicate connection ID errors
-		this.anysocket.stop();
 		this.anysocket.removeAllListeners();
 
-		// Reset connection state
-		this.isConnected = false;
-		this.peer = null;
-		this.notifiedOfConnectError = false;
+		// don't connect when in background
+		if(this.isBackground) return;
 
 		let password = await Utils.getSHA(this.anysocket.id.substring(0, 16) +
 			this.plugin.settings.password +
@@ -163,8 +162,5 @@ export default class AnysocketManager extends EventEmitter {
 
 	stop() {
 		this.anysocket.stop();
-		this.isConnected = false;
-		this.peer = null;
-		this.notifiedOfConnectError = false;
 	}
 }
