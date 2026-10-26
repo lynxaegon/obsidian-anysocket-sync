@@ -57,9 +57,11 @@ let developmentPlugin = {
 
 			// copy client files to server, for auto update
 			const LOCAL_DIR = "C:\\Users\\andre\\Documents\\Obsidian\\.obsidian\\plugins\\anysocket-sync\\";
-			fs.copyFileSync(BUILD_DIR + "main.js", LOCAL_DIR + "main.js");
-			fs.copyFileSync(BUILD_DIR + "styles.css", LOCAL_DIR + "styles.css");
-			fs.copyFileSync(BUILD_DIR + "manifest.json", LOCAL_DIR + "manifest.json");
+			if (fs.existsSync(LOCAL_DIR)) {
+				fs.copyFileSync(BUILD_DIR + "main.js", LOCAL_DIR + "main.js");
+				fs.copyFileSync(BUILD_DIR + "styles.css", LOCAL_DIR + "styles.css");
+				fs.copyFileSync(BUILD_DIR + "manifest.json", LOCAL_DIR + "manifest.json");
+			}
 		});
 	},
 }

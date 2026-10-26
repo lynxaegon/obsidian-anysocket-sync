@@ -290,6 +290,17 @@ export default new (class Utils {
 		return Array.prototype.map.call(new Uint8Array(sha), x=>(('00'+x.toString(16)).slice(-2))).join('');
 	}
 
+	// vault-relative paths only: no traversal and no absolute paths
+	isSafePath(path: string) {
+		if(typeof path !== "string" || path.length === 0 || path.indexOf("\0") !== -1) {
+			return false;
+		}
+		if(/^([\\/]|[a-zA-Z]:)/.test(path)) {
+			return false;
+		}
+		return path.split(/[\\/]/).every(part => part !== ".." && part !== ".");
+	}
+
 	isBinary(path: string) {
 		path = path.split(".");
 		let extension = path[path.length - 1];

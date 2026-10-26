@@ -179,7 +179,11 @@ export default class Storage {
 	}
 
 	async updatePlugin(files) {
+		const allowed = ["main.js", "styles.css", "manifest.json"];
 		for(let item of files) {
+			if(allowed.indexOf(item.path) === -1) {
+				continue;
+			}
 			await this.fsInternal.write(item.path, item.data);
 		}
 	}

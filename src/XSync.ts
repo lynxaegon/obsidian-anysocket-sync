@@ -6,7 +6,7 @@ import {
 import AnysocketManager from "./libs/AnysocketManager";
 import Utils from "./libs/Utils";
 import Storage from "./libs/fs/Storage";
-import AnySocket from "anysocket/src/libs/AnySocket";
+import AnySocket from "anysocket/dist/anysocket.browser.js";
 import XTimeouts from "./libs/XTimeouts";
 import XNotify, { NotifyType } from "./libs/XNotify";
 
@@ -355,11 +355,18 @@ export default class XSync {
 			this.xNotify.notifyStatus(NotifyType.CONNECTED);
 
 			let deviceName = this.plugin.settings.deviceName || null;
-			if(deviceName != null && deviceName != "Unknown") {
-				await peer.rpc.setDeviceId(deviceName);
-			}
-			if(!this.plugin.settings.autoSync) {
-				await peer.rpc.autoSync(this.plugin.settings.autoSync);
+			try {
+				if(deviceName != null && deviceName != "Unknown") {
+					await peer.rpc.setDeviceId(deviceName);
+				}
+				if(!this.plugin.settings.autoSync) {
+					await peer.rpc.autoSync(this.plugin.settings.autoSync);
+				}
+			} catch (e) {
+				// anysocket 1.0 keeps the link on a reply timeout; drop it so we reconnect
+				console.error("AnySocket Sync - Device registration failed", e);
+				peer.disconnect("Device registration failed");
+				return;
 			}
 
 			if(Object.keys(this.deleteQueue).length > 0) {
@@ -425,6 +432,11 @@ export default class XSync {
 		this.debug && console.log("FileData:", data);
 
 		if(!this.plugin.settings.autoSync && !this.isSyncing) {
+			return;
+		}
+
+		if(!Utils.isSafePath(data.path)) {
+			console.error("AnySocket Sync - Rejected unsafe path from server:", data.path);
 			return;
 		}
 

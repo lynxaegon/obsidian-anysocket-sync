@@ -3,7 +3,7 @@ import {Notice, SuggestModal} from "obsidian";
 import AnySocketSyncPlugin from "../../main";
 import {VersionHistoryModal} from "./VersionHistoryModal";
 import Utils from "../Utils";
-import AnySocket from "anysocket/src/libs/AnySocket";
+import AnySocket from "anysocket/dist/anysocket.browser.js";
 
 interface DeletedFile {
 	path: string;

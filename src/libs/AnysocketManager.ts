@@ -4,9 +4,15 @@ import Utils from "./Utils";
 import XSync from "../XSync";
 import {NotifyType} from "./XNotify";
 import EventEmitter from "./Events";
-import AnySocket from "anysocket";
+import AnySocket from "anysocket/dist/anysocket.browser.js";
 
 const NOTICE_COLOR = "#ffaa00";
+
+// anysocket 1.0 drops a silent peer, ~60s budget (same as the server)
+const CONNECT_OPTIONS = {
+	heartbeatInterval: 10 * 1000,
+	heartbeatsMaxMissed: 5
+};
 
 export default class AnysocketManager extends EventEmitter {
 	plugin: Plugin;
@@ -24,7 +30,7 @@ export default class AnysocketManager extends EventEmitter {
 
 		this.xSync = xSync;
 		this.plugin = xSync.plugin;
-		this.anysocket = new AnySocket();
+		this.anysocket = this.createAnySocket();
 
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
 		if (Platform.isMobile) {
@@ -43,8 +49,22 @@ export default class AnysocketManager extends EventEmitter {
 		return Date.now();
 	}
 
+	createAnySocket() {
+		return new AnySocket({
+			// anysocket 1.0 mutual auth, optional so that servers <= 1.5.x (anysocket 0.4) still work
+			auth: {
+				secret: this.plugin.settings.password,
+				optional: true
+			}
+		});
+	}
+
 	async init() {
 		this.anysocket.removeAllListeners();
+		this.anysocket.stop().catch(() => {});
+		// a fresh instance (and id) per connection, so a reconnect is never
+		// refused as a duplicate of a link the server hasn't dropped yet
+		this.anysocket = this.createAnySocket();
 
 		// don't connect when in background
 		if(this.isBackground) return;
@@ -70,10 +90,23 @@ export default class AnysocketManager extends EventEmitter {
 			this.getTime = async () => {
 				return Math.round((await peer.getSyncedTime()).time);
 			}
-			await this.getTime();
+
+			// anysocket 1.0 no longer drops the link when a reply times out,
+			// so a failed handshake step disconnects explicitly (and retries)
+			try {
+				await this.getTime();
+			} catch (e) {
+				console.error("AnySocket Sync - Time sync failed", e);
+				return peer.disconnect("Time sync failed");
+			}
 
 			app.workspace.onLayoutReady(async () => {
-				await this.checkForUpdates(peer);
+				try {
+					await this.checkForUpdates(peer);
+				} catch (e) {
+					console.error("AnySocket Sync - Version check failed", e);
+					peer.disconnect("Version check failed");
+				}
 			});
 		});
 		this.anysocket.on("disconnected", (peer: any) => {
@@ -99,7 +132,7 @@ export default class AnysocketManager extends EventEmitter {
 			await this.xSync.storage.updatePlugin(result.files);
 			// ignore disconnected message
 			this.anysocket.removeAllListeners("disconnected");
-			this.anysocket.stop();
+			this.anysocket.stop().catch(() => {});
 
 			app.plugins.disablePlugin("anysocket-sync");
 			if(this.plugin.BUILD >= result.build) {
@@ -128,9 +161,12 @@ export default class AnysocketManager extends EventEmitter {
 			return;
 		}
 
-		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port).then(async (peer: any) => {
-			peer.e2e();
+		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port, CONNECT_OPTIONS).then(async (peer: any) => {
 			this.notifiedOfConnectError = false;
+			Promise.resolve(peer.e2e()).catch((e) => {
+				console.error("AnySocket Sync - Encryption failed", e);
+				peer.disconnect("e2e failed");
+			});
 		}).catch((e) => {
 			try {
 				console.error("AnySocket Connect Error", e);
@@ -152,7 +188,13 @@ export default class AnysocketManager extends EventEmitter {
 			return;
 
 		if(onReply) {
-			packet = await this.peer.send(packet, true);
+			try {
+				packet = await this.peer.send(packet, true);
+			} catch (e) {
+				console.error("AnySocket Sync - No reply from server", e);
+				this.xSync.xNotify.showNotification(NOTICE_COLOR, "The server did not respond, try again");
+				return;
+			}
 			onReply(packet);
 		}
 		else {
@@ -161,6 +203,6 @@ export default class AnysocketManager extends EventEmitter {
 	}
 
 	stop() {
-		this.anysocket.stop();
+		this.anysocket.stop().catch(() => {});
 	}
 }
