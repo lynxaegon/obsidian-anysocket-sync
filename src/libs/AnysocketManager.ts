@@ -6,10 +6,11 @@ import EventEmitter from "./Events";
 import AnySocket from "anysocket/dist/anysocket.browser.js";
 
 // anysocket 1.0 drops a silent peer, ~60s budget (same as the server)
+// (no connectTimeout: anysocket 1.0.1 hands it to the browser's WebSocket as a subprotocol,
+// which refuses to connect at all; the browser times out a dial on its own)
 const CONNECT_OPTIONS = {
 	heartbeatInterval: 10 * 1000,
-	heartbeatsMaxMissed: 5,
-	connectTimeout: 15 * 1000
+	heartbeatsMaxMissed: 5
 };
 
 // waits between reconnects, so a server that is down does not drain a phone's battery

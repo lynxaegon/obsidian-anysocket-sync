@@ -84,10 +84,11 @@ export default class XSync {
 	platform() {
 		if (Platform.isIosApp) return "ios";
 		if (Platform.isAndroidApp) return "android";
+		if (Platform.isMobile) return "mobile";
 		if (Platform.isMacOS) return "macos";
 		if (Platform.isWin) return "windows";
 		if (Platform.isLinux) return "linux";
-		return Platform.isMobile ? "mobile" : "desktop";
+		return "desktop";
 	}
 
 	// the protocol of the last server we talked to, so changes made offline are tracked the same way

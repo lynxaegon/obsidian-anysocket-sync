@@ -6,7 +6,6 @@ import {
 } from 'obsidian';
 import XSync from './XSync';
 import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
-import {hostname} from "os";
 import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";
 import {SyncPanelModal} from "./libs/modals/SyncPanelModal";
 import Utils from "./libs/Utils";
@@ -31,8 +30,14 @@ interface AnySocketSyncSettings {
 let deviceInfo = (new UAParser(navigator.userAgent)).getDevice();
 
 function getDefaultDeviceName() {
-	if (Platform.isDesktop) {
-		return hostname();
+	if (Platform.isDesktopApp && !Platform.isMobile) {
+		// node's os only exists on desktop; loaded here so phones never ask for it
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-var-requires
+			return require("os").hostname();
+		} catch (e) {
+			return "Computer";
+		}
 	}
 	if (deviceInfo.model) {
 		return deviceInfo.model;
@@ -401,7 +406,11 @@ async function testConnection(settings: AnySocketSyncSettings): Promise<string> 
 	anysocket.authPacket = () => password;
 	anysocket.onAuth = async (packet: any) => await Utils.getSHA(packet.id.substring(0, 16) + settings.password + packet.id.substring(16)) == packet.auth;
 	try {
-		const peer = await anysocket.connect("ws", settings.host, settings.port, { connectTimeout: 10000 });
+		// no connectTimeout (see AnysocketManager): our own, instead
+		const peer: any = await Promise.race([
+			anysocket.connect("ws", settings.host, settings.port),
+			new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10000))
+		]);
 		await peer.e2e();
 		const info = peer.e2eInfo && peer.e2eInfo();
 		const modern = peer.protocolVersion && peer.protocolVersion() >= 1;

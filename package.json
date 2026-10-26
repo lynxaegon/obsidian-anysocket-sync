@@ -1,7 +1,7 @@
 {
 	"name": "obsidian-anysocket-sync",
 	"version": "1.6.0",
-	"description": "Self-Hosted synchronization for you Vault using AnySocket",
+	"description": "Self-hosted, encrypted sync for your vault, using AnySocket",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -23,7 +23,7 @@
 		"typescript": "4.7.4"
 	},
 	"dependencies": {
-		"anysocket": "^1.0.1",
+		"anysocket": "~1.0.2",
 		"ua-parser-js": "^1.0.38"
 	}
 }
