@@ -126,7 +126,7 @@ export default class LocalIndex {
 		this.saveTimeout = setTimeout(() => {
 			this.saveTimeout = null;
 			this.save();
-		}, 500);
+		}, 2000);
 	}
 
 	async save() {

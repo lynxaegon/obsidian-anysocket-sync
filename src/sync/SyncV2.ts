@@ -33,24 +33,45 @@ function toUint8(data) {
 	throw new Error("unexpected content");
 }
 
+// without a copy when the bytes already fill their buffer (a big file is not held twice)
 function toArrayBuffer(bytes: Uint8Array) {
+	if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+		return bytes.buffer;
+	}
 	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
 const depth = (path) => path.split("/").length;
 
-// files in flight at once; the server locks per path, so different files never interfere
-const PARALLEL = 8;
+// at most this many files and bytes in flight: small files go together, a big one goes alone,
+// so a 150GB vault never floods the connection or holds gigabytes in memory (the server locks
+// per path, so different files never interfere)
+const PARALLEL_FILES = 8;
+const PARALLEL_BYTES = 16 * 1024 * 1024;
+// entries per page when listing the server (a big vault has hundreds of thousands)
+const PAGE = 5000;
 
-// fn over every item, at most `limit` at a time
-async function parallel<T>(items: T[], limit: number, fn: (item: T) => Promise<any>) {
-	let next = 0;
-	const worker = async () => {
-		while (next < items.length) {
-			await fn(items[next++]);
+// the most that was ever in flight at once (for the tests)
+export const transferStats = { maxFiles: 0, maxBytes: 0 };
+
+async function parallel<T>(items: T[], size: (item: T) => number, fn: (item: T) => Promise<any>) {
+	const running = new Set<Promise<any>>();
+	let bytes = 0;
+	for (const item of items) {
+		const weight = Math.max(0, size(item) || 0);
+		while (running.size > 0 && (running.size >= PARALLEL_FILES || bytes + weight > PARALLEL_BYTES)) {
+			await Promise.race(running);
 		}
-	};
-	await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(worker));
+		bytes += weight;
+		transferStats.maxFiles = Math.max(transferStats.maxFiles, running.size + 1);
+		transferStats.maxBytes = Math.max(transferStats.maxBytes, bytes);
+		const task = fn(item).finally(() => {
+			bytes -= weight;
+			running.delete(task);
+		});
+		running.add(task);
+	}
+	await Promise.all(running);
 }
 const fileName = (path) => path.split("/").pop();
 
@@ -148,6 +169,31 @@ export default class SyncV2 {
 		return (await this.time()) - Date.now();
 	}
 
+	// bytes; 0 = no limit (the "Largest file to sync" setting, in MB)
+	get maxFileSize() {
+		const mb = Number(this.plugin.settings.maxFileSize) || 0;
+		return mb > 0 ? mb * 1024 * 1024 : 0;
+	}
+
+	tooLarge(size: number) {
+		return this.maxFileSize > 0 && size > this.maxFileSize;
+	}
+
+	// files this device doesn't sync because of their size (path -> bytes), shown in the panel
+	skipped = new Map<string, number>();
+
+	skip(path: string, size: number) {
+		if (!this.skipped.has(path)) {
+			this.skipped.set(path, size);
+			this.xSync.status.emit("change", this.status.state, this.status.state);
+		}
+	}
+
+	localSize(path: string) {
+		const file = app.vault.getAbstractFileByPath(path);
+		return file && file.stat ? file.stat.size : 0;
+	}
+
 	async hashFile(path: string) {
 		const data = await this.storage.readBinary(path);
 		if (data == null) {
@@ -185,6 +231,10 @@ export default class SyncV2 {
 			if (entry && entry.type === "file" && entry.action === "created" && entry.lmtime === file.stat.mtime) {
 				continue;
 			}
+			if (this.tooLarge(file.stat.size)) {
+				this.skip(file.path, file.stat.size);
+				continue;
+			}
 			const hashed = await this.hashFile(file.path);
 			if (!hashed) {
 				continue;
@@ -204,6 +254,9 @@ export default class SyncV2 {
 		for (const path of this.index.paths()) {
 			const entry = this.index.get(path);
 			if (seen.has(path) || entry.action === "deleted") {
+				continue;
+			}
+			if (this.skipped.has(path) && app.vault.getAbstractFileByPath(path)) {
 				continue;
 			}
 			if (!entry.synced) {
@@ -269,52 +322,69 @@ export default class SyncV2 {
 			this.index.resetCursor();
 		}
 
-		// never null in an RPC argument: anysocket's browser build can't send one (1.0.1)
-		const list = await this.rpc(LARGE_TIMEOUT).sync.list(
-			this.index.cursor === null ? false : this.index.cursor,
-			this.index.epoch || false
-		);
-		const remote = new Map<string, any>(list.entries);
+		let total = 0;
+		let done = 0;
+		const progress = () => this.status.set("syncing", { done: ++done, total });
 
-		if (list.full) {
+		// the server's changes, a page at a time
+		// (never null in an RPC argument: anysocket's browser build can't send one, 1.0.1)
+		let cursor = this.index.cursor === null ? false : this.index.cursor;
+		let epoch = this.index.epoch || false;
+		let fullPass = null;
+		let seen: Set<string> = null;
+		let page;
+		do {
+			page = await this.rpc(LARGE_TIMEOUT).sync.list(cursor, epoch, PAGE);
+			if (page.full) {
+				// a full listing (first sync, or the server restarted, even halfway through)
+				fullPass = true;
+				seen = new Set();
+			} else if (fullPass === null) {
+				fullPass = false;
+			}
+
+			const toApply = [];
+			for (const [path, meta] of page.entries) {
+				if (seen) {
+					seen.add(path);
+				}
+				if (!Utils.isSyncable(path)) {
+					continue;
+				}
+				const entry = this.index.get(path);
+				if (entry && sameState(entry, meta)) {
+					// same content on both sides (also how a first sync avoids re-uploading everything)
+					entry.synced = { sha1: meta.sha1 || null, action: meta.action, seq: meta.seq };
+					this.index.set(path, entry);
+					continue;
+				}
+				if (entry && isDirty(entry)) {
+					// our own change wins the right to go first; the server sorts it out
+					continue;
+				}
+				toApply.push([path, meta]);
+			}
+			total += toApply.length;
+			await this.applyRemote(toApply, progress);
+			cursor = page.cursor;
+			epoch = page.epoch;
+		} while (page.more && this.running);
+
+		if (fullPass && this.running) {
 			// paths we agreed on with the server but it no longer has (its data was reset): upload them again
 			for (const path of this.index.paths()) {
 				const entry = this.index.get(path);
-				if (entry.synced && !remote.has(path)) {
+				if (entry.synced && !seen.has(path)) {
 					entry.synced = null;
 					this.index.set(path, entry);
 				}
 			}
 		}
 
-		const toApply = [];
-		for (const [path, meta] of remote) {
-			if (!Utils.isSyncable(path)) {
-				continue;
-			}
-			const entry = this.index.get(path);
-			if (entry && sameState(entry, meta)) {
-				// same content on both sides (also how a first sync avoids re-uploading everything)
-				entry.synced = { sha1: meta.sha1 || null, action: meta.action, seq: meta.seq };
-				this.index.set(path, entry);
-				continue;
-			}
-			if (entry && isDirty(entry)) {
-				// our own change wins the right to go first; the server sorts it out
-				continue;
-			}
-			toApply.push([path, meta]);
-		}
-
-		const dirty = this.index.dirtyPaths();
-		const total = toApply.length + dirty.length;
-		let done = 0;
-		const progress = () => this.status.set("syncing", { done: ++done, total });
-
-		await this.applyRemote(toApply, progress);
+		total += this.index.dirtyPaths().length;
 		await this.pushAll(progress);
 
-		this.index.setCursor(list.epoch, list.cursor);
+		this.index.setCursor(epoch, cursor);
 		await this.index.save();
 		this.status.set("synced", { at: Date.now() });
 	}
@@ -352,7 +422,7 @@ export default class SyncV2 {
 			await this.safely(path, () => this.applyCreated(path, meta, renamedTo.get(path)));
 			progress();
 		}
-		await parallel(creates.filter(e => e[1].type !== "folder"), PARALLEL, async ([path, meta]) => {
+		await parallel(creates.filter(e => e[1].type !== "folder"), e => e[1].size, async ([path, meta]) => {
 			if (!this.running) return;
 			await this.safely(path, () => this.applyCreated(path, meta, renamedTo.get(path)));
 			progress();
@@ -439,6 +509,10 @@ export default class SyncV2 {
 
 		if (!await this.localUnchanged(path)) {
 			return this.keepLocal(path);
+		}
+		if (meta.size != null && this.tooLarge(meta.size)) {
+			this.skip(path, meta.size);
+			return;
 		}
 		await this.download(path, meta);
 		this.activity.add("downloaded", path);
@@ -582,7 +656,7 @@ export default class SyncV2 {
 		for (const group of [0, 1, 2, 3, 4]) {
 			const paths = dirty.filter(path => rank(this.index.get(path)) === group);
 			if (group === 2 || group === 3) {
-				await parallel(paths, PARALLEL, pushOne);
+				await parallel(paths, path => this.localSize(path), pushOne);
 			} else {
 				for (const path of paths) {
 					await pushOne(path);
@@ -746,6 +820,10 @@ export default class SyncV2 {
 			return this.schedulePush(file.path, 0);
 		}
 
+		if (this.tooLarge(file.stat.size)) {
+			this.skip(file.path, file.stat.size);
+			return;
+		}
 		const hashed = await this.hashFile(file.path);
 		if (!hashed) {
 			return;

@@ -116,6 +116,25 @@ export class SyncPanelModal extends Modal {
 			}
 		}
 
+		// ---- too large for this device ----
+		const skipped = this.xSync.v2.skipped;
+		if (skipped.size > 0) {
+			this.section(el, "Not synced on this device", "file-x");
+			const list = el.createDiv({ cls: "anysocket-panel-list" });
+			const limit = this.plugin.settings.maxFileSize;
+			const row = list.createDiv({ cls: "anysocket-panel-item" });
+			const body = row.createDiv({ cls: "anysocket-panel-item-body" });
+			body.createDiv({
+				cls: "anysocket-panel-item-title",
+				text: skipped.size + (skipped.size === 1 ? " file is" : " files are") + " larger than " + (limit >= 1000 ? (limit / 1000) + " GB" : limit + " MB")
+			});
+			const names = [...skipped.entries()].slice(0, 5).map(([p, size]) => p.split("/").pop() + " (" + Math.round(size / 1048576) + " MB)");
+			body.createDiv({
+				cls: "anysocket-panel-item-desc",
+				text: names.join(", ") + (skipped.size > 5 ? ", …" : "") + ". They stay on the devices that have them. Change \"Largest file to sync\" in the settings to include them."
+			});
+		}
+
 		// ---- devices ----
 		this.section(el, "Devices", "monitor-smartphone");
 		const devicesEl = el.createDiv({ cls: "anysocket-panel-list" });

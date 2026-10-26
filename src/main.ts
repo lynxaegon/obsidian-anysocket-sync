@@ -24,6 +24,8 @@ interface AnySocketSyncSettings {
 	notifications: number;
 	deviceName: string;
 	debug: boolean;
+	// MB, 0 = no limit
+	maxFileSize: number;
 }
 
 let deviceInfo = (new UAParser(navigator.userAgent)).getDevice();
@@ -58,6 +60,8 @@ const DEFAULT_SETTINGS: AnySocketSyncSettings = {
 	notifications: 1,
 	deviceName: getDefaultDeviceName(),
 	debug: false,
+	// a phone can't hold a multi-GB file in memory; a computer can
+	maxFileSize: Platform.isMobile ? 200 : 0,
 }
 
 export default class AnySocketSyncPlugin extends Plugin {
@@ -312,6 +316,24 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 				dropdown.setValue(this.plugin.settings.delayedSync.toString())
 					.onChange(async (value) => {
 						this.plugin.settings.delayedSync = parseInt(value);
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName('Largest file to sync')
+			.setDesc("Bigger files stay on the devices that have them (the sync panel lists them). On phones, very large files can run out of memory.")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("0", "No limit");
+				for (const mb of [50, 100, 200, 500, 1000, 2000]) {
+					dropdown.addOption(String(mb), mb >= 1000 ? (mb / 1000) + " GB" : mb + " MB");
+				}
+				dropdown.setValue(String(this.plugin.settings.maxFileSize || 0))
+					.onChange(async (value) => {
+						this.plugin.settings.maxFileSize = parseInt(value);
+						// look at everything again: files skipped before may fit now
+						this.plugin.xSync.v2.skipped.clear();
+						this.plugin.xSync.v2.index.resetCursor();
 						await this.plugin.saveSettings();
 					});
 			});

@@ -6,7 +6,7 @@ import Storage from "./libs/fs/Storage";
 import XTimeouts from "./libs/XTimeouts";
 import Status, {NOTIFY} from "./libs/Status";
 import Activity from "./libs/Activity";
-import SyncV2, {KEPT_COPY} from "./sync/SyncV2";
+import SyncV2, {KEPT_COPY, transferStats} from "./sync/SyncV2";
 import LegacySync from "./sync/LegacySync";
 
 const DEVICE_KEY = "anysocket-sync-device";
@@ -36,6 +36,7 @@ export default class XSync {
 	device: any = null;
 	revoked = false;
 	pendingNotice: any = null;
+	transferStats = transferStats;
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
