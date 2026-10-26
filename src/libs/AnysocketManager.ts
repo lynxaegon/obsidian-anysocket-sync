@@ -2,28 +2,37 @@
 import {Platform, Plugin} from "obsidian";
 import Utils from "./Utils";
 import XSync from "../XSync";
-import {NotifyType} from "./XNotify";
 import EventEmitter from "./Events";
 import AnySocket from "anysocket/dist/anysocket.browser.js";
-
-const NOTICE_COLOR = "#ffaa00";
 
 // anysocket 1.0 drops a silent peer, ~60s budget (same as the server)
 const CONNECT_OPTIONS = {
 	heartbeatInterval: 10 * 1000,
-	heartbeatsMaxMissed: 5
+	heartbeatsMaxMissed: 5,
+	connectTimeout: 15 * 1000
 };
 
+// waits between reconnects, so a server that is down does not drain a phone's battery
+const BACKOFF = [1000, 2000, 5000, 10000, 30000];
+
+/**
+ * The connection: connect, encrypt, check the plugin version (the server may hand us
+ * another version of the plugin), then "ready". Everything after that is the sync engine's.
+ *
+ * events: "ready" (peer, versionCheck), "failed" (reason), "disconnected" (reason), "reload"
+ */
 export default class AnysocketManager extends EventEmitter {
 	plugin: Plugin;
 	xSync: XSync;
-	eventRefs: any = {};
 	anysocket: any;
 	isBackground: boolean = false;
 	isConnected: boolean = false;
 	isUpdating: boolean = false;
-	notifiedOfConnectError = false;
+	isEnabled: boolean = false;
 	peer = null;
+	attempts = 0;
+	refusals = 0;
+	lastFailure: string = null;
 
 	constructor(xSync: XSync) {
 		super();
@@ -34,19 +43,25 @@ export default class AnysocketManager extends EventEmitter {
 
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
 		if (Platform.isMobile) {
-			document.addEventListener("visibilitychange", () => {
+			// called directly: "unload" removes this emitter's listeners, so an event
+			// emitted on the way back would reach nobody and never reconnect
+			this.onVisibility = () => {
 				this.isBackground = document.hidden;
-				if (this.isBackground) {
-					this.emit("unload");
-				} else {
-					this.emit("reload");
+				if (!this.isBackground) {
+					this.attempts = 0;
 				}
-			});
+				this.xSync.onBackground(this.isBackground);
+			};
+			document.addEventListener("visibilitychange", this.onVisibility);
 		}
 	}
 
-	async getTime() {
-		return Date.now();
+	destroy() {
+		if (this.onVisibility) {
+			document.removeEventListener("visibilitychange", this.onVisibility);
+		}
+		this.removeAllListeners();
+		this.stop();
 	}
 
 	createAnySocket() {
@@ -59,12 +74,22 @@ export default class AnysocketManager extends EventEmitter {
 		});
 	}
 
+	async getTime() {
+		return Date.now();
+	}
+
+	// how long to wait before the next reconnect
+	nextDelay() {
+		return BACKOFF[Math.min(this.attempts, BACKOFF.length - 1)];
+	}
+
 	async init() {
 		this.anysocket.removeAllListeners();
 		this.anysocket.stop().catch(() => {});
 		// a fresh instance (and id) per connection, so a reconnect is never
 		// refused as a duplicate of a link the server hasn't dropped yet
 		this.anysocket = this.createAnySocket();
+		this.getTime = async () => Date.now();
 
 		// don't connect when in background
 		if(this.isBackground) return;
@@ -109,10 +134,11 @@ export default class AnysocketManager extends EventEmitter {
 				}
 			});
 		});
-		this.anysocket.on("disconnected", (peer: any) => {
+		this.anysocket.on("disconnected", (peer: any, reason: any) => {
+			const wasConnected = this.isConnected;
 			this.isConnected = false;
 			this.peer = null;
-			this.emit("disconnected");
+			this.emit("disconnected", reason, wasConnected);
 			this.emit("reload");
 		});
 
@@ -126,26 +152,34 @@ export default class AnysocketManager extends EventEmitter {
 			this.peer = peer;
 			this.isConnected = true;
 			this.isUpdating = false;
-			this.emit("connected", peer);
+			this.attempts = 0;
+			this.refusals = 0;
+			this.lastFailure = null;
+			this.emit("ready", peer, result);
 		} else if (result.type == "update") {
 			this.isUpdating = true;
+			this.xSync.status.set("updating");
 			await this.xSync.storage.updatePlugin(result.files);
 			// ignore disconnected message
 			this.anysocket.removeAllListeners("disconnected");
 			this.anysocket.stop().catch(() => {});
 
+			const downgrade = this.plugin.BUILD >= result.build;
+			// shown by the new version too, so remember it across the reload
+			window.localStorage.setItem("anysocket-sync-updated", JSON.stringify({
+				from: this.plugin.VERSION,
+				to: result.version,
+				downgrade
+			}));
 			app.plugins.disablePlugin("anysocket-sync");
-			if(this.plugin.BUILD >= result.build) {
-				this.xSync.xNotify.showNotification(NOTICE_COLOR, "Your version is ahead of the server. Downgraded fom " + this.plugin.VERSION + " to " + result.version);
-			}
-			else {
-				this.xSync.xNotify.showNotification(NOTICE_COLOR, "Updated to version: " + result.version);
-			}
+			this.xSync.status.notify(downgrade ?
+				"your server runs an older version, switched from " + this.plugin.VERSION + " to " + result.version :
+				"updated to version " + result.version);
 			app.plugins.enablePlugin("anysocket-sync");
 		} else {
 			this.anysocket.removeAllListeners();
 			this.emit("unload");
-			this.xSync.xNotify.showNotification(NOTICE_COLOR, "Incompatible client version " + this.plugin.VERSION);
+			this.xSync.status.set("error", { message: "this plugin version (" + this.plugin.VERSION + ") doesn't work with the server" });
 		}
 	}
 
@@ -154,33 +188,48 @@ export default class AnysocketManager extends EventEmitter {
 			return;
 		}
 
-		if(!this.plugin.settings.password) {
+		if(!this.plugin.settings.password || !this.plugin.settings.host) {
 			console.log("AnySocket Sync - Requires setup");
-			this.xSync.xNotify.showNotification(NOTICE_COLOR, "AnySocket Sync - Requires setup");
+			this.xSync.status.set("setup");
 			this.emit("unload");
 			return;
 		}
 
+		this.xSync.status.set("connecting");
 		this.anysocket.connect("ws", this.plugin.settings.host, this.plugin.settings.port, CONNECT_OPTIONS).then(async (peer: any) => {
-			this.notifiedOfConnectError = false;
 			Promise.resolve(peer.e2e()).catch((e) => {
 				console.error("AnySocket Sync - Encryption failed", e);
 				peer.disconnect("e2e failed");
 			});
 		}).catch((e) => {
-			try {
-				console.error("AnySocket Connect Error", e);
-				if (!this.notifiedOfConnectError && !this.isUpdating) {
-					this.notifiedOfConnectError = true;
-					this.xSync.xNotify.notifyStatus(NotifyType.NOT_CONNECTED);
-				}
-			}
-			catch(e) {
-				console.log("Error", e);
-			}
+			console.error("AnySocket Sync - Connect error", e);
+			this.attempts++;
 			this.isConnected = false;
+			if (!this.isUpdating) {
+				// a proxy whose backend is down closes the same way once; a wrong password does it every time
+				this.refusals = AnysocketManager.classify(e) === "auth_failed" ? this.refusals + 1 : 0;
+				this.lastFailure = this.refusals >= 2 ? "auth_failed" : "unreachable";
+				this.emit("failed", this.lastFailure);
+			}
 			this.emit("reload");
 		});
+	}
+
+	// why a connection attempt failed: the server closed it while we authenticated
+	// (the password), or we never reached it
+	static classify(e) {
+		if (e && e.code === "ECONNFAILED") {
+			return "auth_failed";
+		}
+		return "unreachable";
+	}
+
+	// a message, and its reply (legacy protocol)
+	request(packet) {
+		if (!this.peer) {
+			return Promise.reject(new Error("Not connected"));
+		}
+		return this.peer.send(packet, true).then(reply => reply.msg);
 	}
 
 	async send(packet, onReply) {
@@ -192,7 +241,7 @@ export default class AnysocketManager extends EventEmitter {
 				packet = await this.peer.send(packet, true);
 			} catch (e) {
 				console.error("AnySocket Sync - No reply from server", e);
-				this.xSync.xNotify.showNotification(NOTICE_COLOR, "The server did not respond, try again");
+				this.xSync.status.notify("the server did not respond, try again");
 				return;
 			}
 			onReply(packet);

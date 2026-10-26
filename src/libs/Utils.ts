@@ -301,9 +301,38 @@ export default new (class Utils {
 		return path.split(/[\\/]/).every(part => part !== ".." && part !== ".");
 	}
 
+	// what a 1.6.0 server stores: safe, and no segment named "metadata" (its storage layout uses that name)
+	isSyncable(path: string) {
+		return this.isSafePath(path) && path.split("/").indexOf("metadata") === -1;
+	}
+
+	// "just now", "5 min ago", "2 h ago", "Oct 26"
+	ago(time: number) {
+		if (!time) {
+			return "";
+		}
+		const s = Math.round((Date.now() - time) / 1000);
+		if (s < 45) return "just now";
+		if (s < 3600) return Math.max(1, Math.round(s / 60)) + " min ago";
+		if (s < 86400) return Math.round(s / 3600) + " h ago";
+		return new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+	}
+
+	randomId(bytes = 16) {
+		const data = new Uint8Array(bytes);
+		crypto.getRandomValues(data);
+		return Array.prototype.map.call(data, x => ("00" + x.toString(16)).slice(-2)).join("");
+	}
+
+	// by extension, case-insensitive ("Photo.PNG" is binary too)
 	isBinary(path: string) {
-		path = path.split(".");
-		let extension = path[path.length - 1];
-		return this.binaryExtensions.indexOf(extension) !== -1;
+		let parts = path.split(".");
+		if (parts.length < 2) {
+			return false;
+		}
+		if (!this._binarySet) {
+			this._binarySet = new Set(this.binaryExtensions.map(e => e.toLowerCase()));
+		}
+		return this._binarySet.has(parts[parts.length - 1].toLowerCase());
 	}
 })();

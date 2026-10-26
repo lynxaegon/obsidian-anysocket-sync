@@ -1,6 +1,9 @@
 // @ts-nocheck
 import {MarkdownPreviewView, Modal, Notice} from "obsidian";
 import AnySocketSyncPlugin from "../../main";
+import Utils from "../Utils";
+
+const IMAGES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", avif: "image/avif" };
 
 export class VersionHistoryModal extends Modal {
 	plugin: AnySocketSyncPlugin;
@@ -14,6 +17,14 @@ export class VersionHistoryModal extends Modal {
 		this.name = "Unknown";
 		this.versions = [];
 		this.type = "created";
+		this.binary = Utils.isBinary(path);
+		this.selectedData = null;
+		this.objectUrl = null;
+
+		this.engine = plugin.xSync.historyEngine();
+		if (!this.engine) {
+			return;
+		}
 
 		this.open();
 
@@ -35,7 +46,7 @@ export class VersionHistoryModal extends Modal {
 
 		// Titlebar setup
 		let elTitle = elContent.createDiv("version-titlebar");
-		
+
 		// Back button (mobile portrait only)
 		if (this.app.isMobile) {
 			this.backButton = elTitle.createEl("button", {
@@ -44,7 +55,7 @@ export class VersionHistoryModal extends Modal {
 			});
 			this.backButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`;
 			this.backButton.onclick = this.onBack.bind(this);
-			
+
 			// Hide back button in landscape (both views visible)
 			if (!this.isPortrait()) {
 				this.backButton.hide();
@@ -64,25 +75,32 @@ export class VersionHistoryModal extends Modal {
 		this.buttonRestore.disabled = true;
 		this.buttonRestore.onclick = this.onRestore.bind(this);
 
-		// Markdown preview setup (hack for MarkdownPreviewView)
-		let _originalContentEl = this.contentEl;
-		this.contentEl = elContent;
-		this.markdownView = new MarkdownPreviewView(this);
-		this.contentEl = _originalContentEl;
+		if (this.binary) {
+			this.previewEl = elContent.createDiv("version-binary-preview");
+		} else {
+			// Markdown preview setup (hack for MarkdownPreviewView)
+			let _originalContentEl = this.contentEl;
+			this.contentEl = elContent;
+			this.markdownView = new MarkdownPreviewView(this);
+			this.contentEl = _originalContentEl;
+		}
 
 		// Hide container on mobile portrait initially (landscape shows both)
 		if (this.app.isMobile && this.isPortrait()) {
 			this.elContainer.hide();
 		}
 
+		const loading = this.elList.createDiv({ text: "Loading…", cls: "version-timestamp version-message" });
+
 		// Load version history
-		this.plugin.xSync.listVersionHistory(this.path, (data: any) => {
+		this.engine.listVersions(this.path).then((data: any) => {
+			loading.remove();
 			this.versions = [];
-			if (!data || data.data.length <= 0) {
+			if (!data || !data.data || data.data.length <= 0) {
 				this.elList.createDiv({
-					text: "No version history found",
-					cls: "version-timestamp"
-				}).style.opacity = "0.5";
+					text: "No versions on the server yet",
+					cls: "version-timestamp version-message"
+				});
 				return;
 			}
 
@@ -108,45 +126,53 @@ export class VersionHistoryModal extends Modal {
 			if (this.versions.length > 0 && (!this.app.isMobile || !this.isPortrait())) {
 				this.internalItemSelect(this.versions[0]);
 			}
+		}).catch((e) => {
+			loading.setText("Couldn't load the history: " + (e.message || e.error || e));
 		});
 	}
 
 	private formatTimestamp(timestamp) {
-		let date =  new Date(timestamp);
-
-		let month = date.getMonth() + 1; // Months are zero-based in JavaScript
-		let day = date.getDate();
-		let year = date.getFullYear();
-		let hours = date.getHours();
-		let minutes = date.getMinutes();
-		let ampm = hours >= 12 ? 'PM' : 'AM';
-
-		hours = hours % 12;
-		hours = hours ? hours : 12; // the hour '0' should be '12'
-		minutes = minutes < 10 ? '0' + minutes : minutes; // zero-padding minutes
-
-		return `${month}/${day}/${year} ${hours}:${minutes} ${ampm}`;
+		return new Date(timestamp).toLocaleString(undefined, {
+			year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
+		});
 	}
 
 	private internalItemSelect(item) {
 		// Update active state
 		this.versions.forEach(v => v.el.removeClass("active"));
 		item.el.addClass("active");
+		this.selectedVersion = item;
+		this.selectedData = null;
+		this.buttonRestore.disabled = true;
 
 		// Load version content
-		this.plugin.xSync.readVersionHistory(this.path, item.timestamp, (data: any) => {
-			if (typeof data !== "string") {
-				data = "";
+		this.engine.readVersion(this.path, item.timestamp).then((bytes: Uint8Array) => {
+			if (this.selectedVersion !== item) {
+				return;
 			}
-			this.markdownView.set(data, true);
-			this.markdownView.applyScroll(0);
+			this.selectedData = bytes;
+			if (this.binary) {
+				this.showBinary(bytes);
+			} else {
+				this.markdownView.set(bytes ? new TextDecoder().decode(bytes) : "", true);
+				this.markdownView.applyScroll(0);
+			}
+			this.updateRestoreButton();
+		}).catch((e) => {
+			new Notice("AnySocket Sync: couldn't load this version (" + (e.message || e.error || e) + ")");
 		});
 
-		this.selectedVersion = item;
+		// Mobile Portrait: Show content view (slide over)
+		// Mobile Landscape: Both views visible (no action needed)
+		if (this.app.isMobile && this.isPortrait()) {
+			this.elContainer.show();
+			this.elList.hide();
+		}
+	}
 
-		// Update restore button state
-		const isCurrentVersion = this.type === "created" && 
-			this.versions.length > 0 && 
+	private updateRestoreButton() {
+		const isCurrentVersion = this.type === "created" &&
+			this.versions.length > 0 &&
 			this.selectedVersion.timestamp === this.versions[0].timestamp;
 
 		if (isCurrentVersion) {
@@ -154,14 +180,31 @@ export class VersionHistoryModal extends Modal {
 			this.buttonRestore.disabled = true;
 		} else {
 			this.buttonRestore.textContent = "Restore";
-			this.buttonRestore.disabled = false;
+			this.buttonRestore.disabled = this.selectedData == null;
 		}
+	}
 
-		// Mobile Portrait: Show content view (slide over)
-		// Mobile Landscape: Both views visible (no action needed)
-		if (this.app.isMobile && this.isPortrait()) {
-			this.elContainer.show();
-			this.elList.hide();
+	private showBinary(bytes: Uint8Array) {
+		this.previewEl.empty();
+		if (this.objectUrl) {
+			URL.revokeObjectURL(this.objectUrl);
+			this.objectUrl = null;
+		}
+		const ext = this.path.split(".").pop().toLowerCase();
+		if (bytes && IMAGES[ext]) {
+			this.objectUrl = URL.createObjectURL(new Blob([bytes], { type: IMAGES[ext] }));
+			this.previewEl.createEl("img", { attr: { src: this.objectUrl } });
+		} else {
+			this.previewEl.createDiv({
+				cls: "version-message",
+				text: bytes ? "No preview for this file type (" + Math.max(1, Math.round(bytes.length / 1024)) + " KB)" : "This version is not available"
+			});
+		}
+	}
+
+	onClose() {
+		if (this.objectUrl) {
+			URL.revokeObjectURL(this.objectUrl);
 		}
 	}
 
@@ -177,19 +220,15 @@ export class VersionHistoryModal extends Modal {
 	}
 
 	private async onRestore() {
-		let data = this.markdownView.get();
-		let metadata = await this.plugin.xSync.getMetadata(
-			"restore",
-			{
-				path: this.path,
-				data: data
-			}
-		);
-		// force an update
-		metadata.sha1 = null;
-
-		await this.plugin.xSync.storage.write(this.path, data, metadata);
-		new Notice("Restored - " + this.name + " ("+ this.formatTimestamp(this.selectedVersion.timestamp) +")")
-		this.close();
+		if (this.selectedData == null) {
+			return;
+		}
+		try {
+			await this.engine.restore(this.path, this.selectedData);
+			new Notice("Restored " + this.name + " (" + this.formatTimestamp(this.selectedVersion.timestamp) + ")");
+			this.close();
+		} catch (e) {
+			new Notice("AnySocket Sync: couldn't restore (" + (e.message || e.error || e) + ")");
+		}
 	}
 }

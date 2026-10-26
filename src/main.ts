@@ -5,12 +5,14 @@ import {
 	Setting
 } from 'obsidian';
 import XSync from './XSync';
-import {NotifyType} from './libs/XNotify';
 import {VersionHistoryModal} from "./libs/modals/VersionHistoryModal";
 import {hostname} from "os";
 import {FilesHistoryModal} from "./libs/modals/FilesHistoryModal";
+import {SyncPanelModal} from "./libs/modals/SyncPanelModal";
 import Utils from "./libs/Utils";
 import {UAParser} from "ua-parser-js";
+// @ts-ignore
+import AnySocket from "anysocket/dist/anysocket.browser.js";
 
 interface AnySocketSyncSettings {
 	host: string;
@@ -27,7 +29,23 @@ interface AnySocketSyncSettings {
 let deviceInfo = (new UAParser(navigator.userAgent)).getDevice();
 
 function getDefaultDeviceName() {
-	return Platform.isDesktop ? hostname() : deviceInfo.model || "Unknown";
+	if (Platform.isDesktop) {
+		return hostname();
+	}
+	if (deviceInfo.model) {
+		return deviceInfo.model;
+	}
+	// @ts-ignore
+	if (Platform.isIosApp) {
+		// @ts-ignore
+		return Platform.isTablet ? "iPad" : "iPhone";
+	}
+	// @ts-ignore
+	if (Platform.isAndroidApp) {
+		// @ts-ignore
+		return Platform.isTablet ? "Android tablet" : "Android phone";
+	}
+	return "Mobile";
 }
 
 const DEFAULT_SETTINGS: AnySocketSyncSettings = {
@@ -47,23 +65,20 @@ export default class AnySocketSyncPlugin extends Plugin {
 	BUILD = "__anysocketsync_build__";
 	settings: AnySocketSyncSettings;
 	xSync: XSync;
-	statusBarItem: HTMLElement;
-	statusBarIcon: HTMLElement;
-	statusBarMessage: HTMLElement;
-	timeoutStatusMessage: any;
 	isReady: boolean = false;
+	panel: SyncPanelModal | null = null;
 
 	async onload() {
 		await this.loadSettings();
 		this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
 			// @ts-ignore
 			// if folder, return
-
 			if (!file.stat) {
 				return;
 			}
 
-			if (!Utils.isBinary(file.path)) {
+			// binary files have history too on a 1.6.0+ server
+			if (!Utils.isBinary(file.path) || this.xSync.protocol >= 2) {
 				menu.addItem((item) => {
 					item
 						.setTitle("Version history")
@@ -107,6 +122,12 @@ export default class AnySocketSyncPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: "open-sync-panel",
+			name: "Open sync panel (status, devices, activity)",
+			callback: () => this.openSyncPanel()
+		});
+
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new AnySocketSyncSettingTab(this));
 
@@ -114,6 +135,7 @@ export default class AnySocketSyncPlugin extends Plugin {
 		this.xSync.makeStatusBarItem(this.addStatusBarItem());
 
 		// startup
+		// @ts-ignore
 		if(!app.workspace.layoutReady) {
 			// @ts-ignore
 			this.registerEvent(this.app.workspace.on("layout-ready", async () => {
@@ -132,83 +154,118 @@ export default class AnySocketSyncPlugin extends Plugin {
 
 	async onunload() {
 		await this.xSync.enabled(false);
+		this.xSync.destroy();
 	}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		if (!this.settings.deviceName || this.settings.deviceName === "Unknown") {
+			this.settings.deviceName = getDefaultDeviceName();
+		}
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-		this.xSync.reload();
+		// a removed device tries again once its settings change
+		this.xSync.revoked = false;
+		this.xSync.anysocket.attempts = 0;
+		this.xSync.reload(0);
 	}
 
-	getSVGIcon() {
-		return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide-send"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"></path><path d="m21.854 2.147-10.94 10.939"></path></svg>';
+	openSyncPanel() {
+		if (this.panel) {
+			return;
+		}
+		this.panel = new SyncPanelModal(this);
+		this.panel.onClose = () => {
+			this.panel?.cleanup();
+			this.panel = null;
+		};
+		this.panel.open();
 	}
 }
 
 class AnySocketSyncSettingTab extends PluginSettingTab {
 	plugin: AnySocketSyncPlugin;
+	statusEl: HTMLElement;
+	onStatus: any;
 
 	constructor(plugin: AnySocketSyncPlugin) {
+		// @ts-ignore
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	// a text field that saves when you leave it (or press enter), not on every keystroke
+	textSetting(name: string, desc: string, key: string, placeholder: string, options: { password?: boolean, fallback?: () => string } = {}) {
+		return new Setting(this.containerEl)
+			.setName(name)
+			.setDesc(desc)
+			.addText(text => {
+				// @ts-ignore
+				text.setPlaceholder(placeholder).setValue(this.plugin.settings[key]);
+				if (options.password) {
+					text.inputEl.type = "password";
+				}
+				text.inputEl.addEventListener("change", async () => {
+					let value = text.getValue().trim();
+					if (!value && options.fallback) {
+						value = options.fallback();
+						text.setValue(value);
+					}
+					// @ts-ignore
+					if (this.plugin.settings[key] !== value) {
+						// @ts-ignore
+						this.plugin.settings[key] = value;
+						await this.plugin.saveSettings();
+					}
+				});
+			});
 	}
 
 	display(): void {
 		const {containerEl} = this;
 		containerEl.empty();
+		containerEl.addClass("anysocket-settings");
+
+		// what is going on, in one line
+		const summary = new Setting(containerEl)
+			.setName("Status")
+			.addButton(button => button
+				.setButtonText("Open sync panel")
+				.onClick(() => this.plugin.openSyncPanel()));
+		this.statusEl = summary.descEl;
+		const update = () => this.statusEl.setText(this.plugin.xSync.status.sentence());
+		update();
+		this.onStatus = update;
+		(this.plugin.xSync.status as any).on("change", this.onStatus);
 
 		new Setting(containerEl)
-			.setName("Connection settings")
+			.setName("Connection")
 			.setHeading();
 
+		this.textSetting("Device name", "How this device appears to your other devices.", "deviceName", getDefaultDeviceName(), {
+			fallback: getDefaultDeviceName
+		});
+		this.textSetting("Host", "Your server's address, e.g. sync.example.com or 192.168.1.10", "host", "127.0.0.1");
+		this.textSetting("Port", "", "port", "3000");
+		this.textSetting("Password", "The \"password\" from the server's config.js", "password", "password", { password: true });
+
+		const test = new Setting(containerEl)
+			.setName("Test connection")
+			.setDesc("Checks the address and password above.");
+		test.addButton(button => button
+			.setButtonText("Test")
+			.onClick(async () => {
+				button.setDisabled(true);
+				test.setDesc("Testing…");
+				test.setDesc(await testConnection(this.plugin.settings));
+				button.setDisabled(false);
+			}));
+
 		new Setting(containerEl)
-			.setName('Device name')
-			.addText(text => text
-				.setPlaceholder(getDefaultDeviceName())
-				.setValue(this.plugin.settings.deviceName)
-				.onChange(async (value) => {
-					if (value == "") {
-						value = getDefaultDeviceName();
-					}
-					this.plugin.settings.deviceName = value;
-					await this.plugin.saveSettings();
-				}));
-		new Setting(containerEl)
-			.setName('Host')
-			.addText(text => text
-				.setPlaceholder('127.0.0.1')
-				.setValue(this.plugin.settings.host)
-				.onChange(async (value) => {
-					this.plugin.settings.host = value;
-					await this.plugin.saveSettings();
-				}));
-		new Setting(containerEl)
-			.setName('Port')
-			.addText(text => text
-				.setPlaceholder('3000')
-				.setValue(this.plugin.settings.port)
-				.onChange(async (value) => {
-					this.plugin.settings.port = value;
-					await this.plugin.saveSettings();
-				}));
-		new Setting(containerEl)
-			.setName('Password')
-			.addText(text => {
-					text
-						.setPlaceholder('pass')
-						.setValue(this.plugin.settings.password)
-						.onChange(async (value) => {
-							this.plugin.settings.password = value;
-							await this.plugin.saveSettings();
-						});
-					text.inputEl.type = "password";
-				}
-			);
-		new Setting(containerEl)
-			.setName('Enable Connection')
+			.setName('Enable connection')
+			.setDesc("Connect to the server and sync this vault.")
 			.addToggle((toggle) => {
 				toggle
 					.setValue(this.plugin.settings.syncEnabled)
@@ -219,12 +276,24 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("Sync settings")
+			.setName("Sync")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName('Delayed Sync')
-			.setDesc("Delay sync until no changes for the specified duration (or focus changed)")
+			.setName('Auto sync')
+			.setDesc("Sync changes as they happen. When off, use the \"Sync now\" command.")
+			.addToggle((toggle) => {
+				toggle
+					.setValue(this.plugin.settings.autoSync)
+					.onChange(async (value) => {
+						this.plugin.settings.autoSync = value;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName('Delayed sync')
+			.setDesc("Wait this long after you stop typing before sending a change (or until you switch notes).")
 			.addDropdown((dropdown) => {
 				dropdown.addOption("0", "Instant");
 				dropdown.addOption("3", "3s");
@@ -248,23 +317,12 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName('Auto Sync')
-			.setDesc("Automatically sync when local/remote changes are detected")
-			.addToggle((toggle) => {
-				toggle
-					.setValue(this.plugin.settings.autoSync)
-					.onChange(async (value) => {
-						this.plugin.settings.autoSync = value;
-						await this.plugin.saveSettings();
-					});
-			});
-
-		new Setting(containerEl)
 			.setName('Notifications')
+			.setDesc("Pop-ups. The status bar always shows what is going on.")
 			.addDropdown((dropdown) => {
 				dropdown.addOption("0", "Off");
-				dropdown.addOption("1", "Connection status");
-				dropdown.addOption("2", "Connection & sync status");
+				dropdown.addOption("1", "Important only");
+				dropdown.addOption("2", "Everything");
 
 				dropdown.setValue(this.plugin.settings.notifications.toString())
 					.onChange(async (value) => {
@@ -274,7 +332,12 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
+			.setName("Advanced")
+			.setHeading();
+
+		new Setting(containerEl)
 			.setName('Debug')
+			.setDesc("Log what sync does to the developer console.")
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.debug)
@@ -286,14 +349,48 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Rebuild index')
-			.setDesc("It will reindex all the files in the vault")
+			.setDesc("Forget what this device knows about synced files and compare everything with the server again. Nothing is deleted; if a file differs, both versions are kept.")
 			.addButton(button => button
 				.setButtonText('Rebuild')
 				.onClick(async () => {
 					await this.plugin.xSync.storage.dropMetadata();
-					this.plugin.xSync.reload();
-					this.plugin.xSync.xNotify.showNotification('#ffaa00', "Rebuilding index");
+					await this.plugin.xSync.v2.index.drop();
+					this.plugin.xSync.reload(0);
+					this.plugin.xSync.status.notify("rebuilding the index");
 				})
 			);
+	}
+
+	hide() {
+		if (this.onStatus) {
+			(this.plugin.xSync.status as any).off("change", this.onStatus);
+			this.onStatus = null;
+		}
+	}
+}
+
+// connects with these settings once, without syncing, and says what happened
+async function testConnection(settings: AnySocketSyncSettings): Promise<string> {
+	if (!settings.host || !settings.password) {
+		return "Enter the host and the password first.";
+	}
+	const anysocket = new AnySocket({ auth: { secret: settings.password, optional: true } });
+	const password = await Utils.getSHA(anysocket.id.substring(0, 16) + settings.password + anysocket.id.substring(16));
+	anysocket.authPacket = () => password;
+	anysocket.onAuth = async (packet: any) => await Utils.getSHA(packet.id.substring(0, 16) + settings.password + packet.id.substring(16)) == packet.auth;
+	try {
+		const peer = await anysocket.connect("ws", settings.host, settings.port, { connectTimeout: 10000 });
+		await peer.e2e();
+		const info = peer.e2eInfo && peer.e2eInfo();
+		const modern = peer.protocolVersion && peer.protocolVersion() >= 1;
+		return "✓ Connected, encrypted" + (info && info.cipher ? " (" + info.cipher.toUpperCase() + ")" : "") +
+			(modern ? "." : ". The server runs an older version (before 1.6.0); updating it is recommended.");
+	} catch (e) {
+		if (e && e.code === "ECONNFAILED") {
+			return "✗ The server refused the connection: the password is most likely wrong.";
+		}
+		return "✗ Can't reach " + settings.host + ":" + settings.port + ". Check the address, the port, and that the server is running.";
+	} finally {
+		anysocket.stop().catch(() => {});
 	}
 }

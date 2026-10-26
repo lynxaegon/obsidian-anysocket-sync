@@ -1,35 +1,55 @@
 // @ts-nocheck
-import {
-	TAbstractFile,
-	Plugin,
-} from "obsidian";
+import {Platform, Plugin, TAbstractFile} from "obsidian";
 import AnysocketManager from "./libs/AnysocketManager";
 import Utils from "./libs/Utils";
 import Storage from "./libs/fs/Storage";
-import AnySocket from "anysocket/dist/anysocket.browser.js";
 import XTimeouts from "./libs/XTimeouts";
-import XNotify, { NotifyType } from "./libs/XNotify";
+import Status, {NOTIFY} from "./libs/Status";
+import Activity from "./libs/Activity";
+import SyncV2, {KEPT_COPY} from "./sync/SyncV2";
+import LegacySync from "./sync/LegacySync";
 
+const DEVICE_KEY = "anysocket-sync-device";
+const PROTOCOL_KEY = "anysocket-sync-protocol";
 
+/**
+ * Ties it together: the connection, the device (and its approval), and the sync engine.
+ * A 1.6.0+ server gets SyncV2; a 1.5.x server gets the 1.5.0 sync as it was (LegacySync).
+ */
 export default class XSync {
 	plugin: Plugin;
 	isEnabled = false;
+	inited = false;
 	eventRefs: any = {};
-	anysocket: any;
+	anysocket: AnysocketManager;
 	xTimeouts: XTimeouts;
 	storage: Storage;
+	status: Status;
+	activity: Activity;
 	reloadTimeout = null;
-	xNotify: XNotify;
-	deleteQueue: Record<string, any> = {}; // path -> delete event
-	isProcessingDeleteQueue: boolean = false;
+	attentionTimeout = null;
+	v2: SyncV2;
+	legacy: LegacySync;
+	engine: any = null;
+	protocol = 0;
+	server: any = null;
+	device: any = null;
+	revoked = false;
+	pendingNotice: any = null;
 
 	constructor(plugin: Plugin) {
 		this.plugin = plugin;
-		this.unsentSessionEvents = {};
-		this.anysocket = new AnysocketManager(this);
+		this.status = new Status(plugin);
+		this.activity = new Activity();
 		this.storage = new Storage(plugin);
 		this.xTimeouts = new XTimeouts();
-		this.xNotify = new XNotify(this);
+		this.anysocket = new AnysocketManager(this);
+		this.v2 = new SyncV2(this);
+		this.legacy = new LegacySync(this);
+	}
+
+	get debug() {
+		return this.plugin.settings.debug;
 	}
 
 	async enabled(value) {
@@ -43,361 +63,85 @@ export default class XSync {
 		}
 	}
 
-	connectionOK() {
-		if (!this.isEnabled) {
-			this.xNotify.notifyStatus(NotifyType.PLUGIN_DISABLED);
-			return false;
-		}
+	// ---- this device ----
 
-		if (!this.anysocket.isConnected) {
-			this.xNotify.notifyStatus(NotifyType.NOT_CONNECTED);
-			return false;
-		}
-
-		return true;
-	}
-
-	async listVersionHistory(path, callback) {
-		this.anysocket.send({
-			type: "file_history",
-			data: {
-				type: "list_versions",
-				path: path,
-			}
-		}, (packet) => {
-			callback(packet.msg);
-		});
-	}
-
-	async readVersionHistory(path, timestamp, callback) {
-		if(!this.connectionOK()) return;
-
-		this.anysocket.send({
-			type: "file_history",
-			data: {
-				type: "read",
-				binary: Utils.isBinary(path),
-				path: path,
-				timestamp: timestamp
-			}
-		}, (packet) => {
-			callback(packet.msg);
-		});
-	}
-
-	async listFilesHistory(deletedOnly, callback) {
-		if(!this.connectionOK()) return;
-
-		this.anysocket.send({
-			type: "file_history",
-			data: {
-				type: "list_files",
-				mode: deletedOnly ? "deleted": "all"
-			}
-		}, (packet) => {
-			callback(packet.msg);
-		});
-	}
-
-	async processDeleteQueue() {
-		if(!this.anysocket.isConnected) return;
-		
-		if(this.isProcessingDeleteQueue) {
-			return;
-		}
-		
-		const queuedPaths = Object.keys(this.deleteQueue);
-		if(queuedPaths.length === 0) return;
-
-		this.isProcessingDeleteQueue = true;
-
-		const itemsToProcess = {...this.deleteQueue};
-		const processedPaths: string[] = [];
-
+	// kept in this device's local storage (not in the vault), so copying a vault never copies it
+	getDevice() {
+		let device = null;
 		try {
-			for(let path of queuedPaths) {
-				const deleteEvent = itemsToProcess[path];
-				try {
-					// Safety check: verify file is actually still deleted
-					const file = app.vault.getAbstractFileByPath(path);
-					if (file) {
-						// File exists again - check if it's newer than our queued deletion
-						const currentMetadata = await this.storage.readMetadata(path);
-						if (currentMetadata && currentMetadata.mtime > deleteEvent.metadata.mtime) {
-							processedPaths.push(path); // Remove from queue
-							continue;
-						}
-					}
-
-					this.anysocket.peer.send({
-						type: "file_event",
-						data: {
-							...deleteEvent.metadata,
-							path: path
-						}
-					});
-					processedPaths.push(path);
-				} catch(e) {
-					console.error("Failed to send deletion event:", path, e);
-				}
-			}
-
-			for(let path of processedPaths) {
-				delete this.deleteQueue[path];
-			}
-			
-			await this.storage.saveDeleteQueue(this.deleteQueue);
-			
-			const remaining = Object.keys(this.deleteQueue).length;
-		} finally {
-			this.isProcessingDeleteQueue = false;
-			
-			if(Object.keys(this.deleteQueue).length > 0) {
-				this.processDeleteQueue().catch(e => {
-					console.error("Error in follow-up delete queue processing:", e);
-				});
-			}
-		}
-	}
-
-	async sync() {
-		if(!this.anysocket.isConnected) return;
-		if(this.isSyncing) return;
-
-		for(let key in this.unsentSessionEvents) {
-			let event = this.unsentSessionEvents[key];
-			await this._processLocalEvent(event.action, event.file, event.metadata, false);
-		}
-		this.unsentSessionEvents = {};
-
-		this.isSyncing = true;
-		this.xNotify.notifyStatus(NotifyType.SYNCING);
-		this.debug && console.log("sync");
-
-		await this.storage.computeTree();
-
-		let data = [];
-		for (const path in this.storage.tree) {
-			const metadata = this.storage.tree[path];
-			data.push({
-				path,
-				metadata
-			});
-		}
-
-		this.anysocket.send({
-			type: "sync",
-			data: data
-		});
-	}
-
-	async onSyncCompleted(peer) {
-		this.isSyncing = false;
-		this.xNotify.notifyStatus(NotifyType.SYNC_COMPLETED);
-	}
-
-	async onFocusChanged() {
-		this.xTimeouts.executeAll();
-	}
-
-	// create, modify, delete, rename
-	async processLocalEvent(action: string, file: TAbstractFile, args: any, forceChanged: boolean = false) {
-		if ((action == "create" || action == "modify") && this.deleteQueue[file.path]) {
-			delete this.deleteQueue[file.path];
-			await this.storage.saveDeleteQueue(this.deleteQueue);
-		}
-
-		if (action == "rename") {
-			const oldPath = args[0];
-			const oldMetadata = await this.storage.readMetadata(oldPath);
-			
-			if (oldMetadata) {
-				this.deleteQueue[oldPath] = {
-					action: "delete",
-					path: oldPath,
-					metadata: {
-						action: "deleted",
-						sha1: oldMetadata.sha1,
-						mtime: await this.anysocket.getTime(),
-						type: oldMetadata.type
-					},
-					timestamp: Date.now()
-				};
-			} else {
-				this.deleteQueue[oldPath] = {
-					action: "delete",
-					path: oldPath,
-					metadata: {
-						action: "deleted",
-						sha1: null,
-						mtime: await this.anysocket.getTime(),
-						type: "file"
-					},
-					timestamp: Date.now()
-				};
-			}
-			
-			await this.storage.saveDeleteQueue(this.deleteQueue);
-			
-			if(this.anysocket.isConnected) {
-				this.processDeleteQueue().catch(e => {
-					console.error("Error processing delete queue:", e);
-				});
-			}
-			
-			await this.processLocalEvent("create", file, null, true);
-			return;
-		}
-
-		let metadata = await this.getMetadata(action, file);
-		if (action == "delete") {
-			this.deleteQueue[file.path] = {
-				action: action,
-				path: file.path,
-				metadata: metadata.metadata,
-				timestamp: Date.now()
-			};
-			
-			await this.storage.saveDeleteQueue(this.deleteQueue);
-			
-			if(this.anysocket.isConnected) {
-				this.processDeleteQueue().catch(e => {
-					console.error("Error processing delete queue:", e);
-				});
-			}
-
-			return;
-		}
-
-		// Queue events if autoSync is disabled or not connected
-		if(!this.plugin.settings.autoSync || !this.anysocket.isConnected) {
-			this.unsentSessionEvents[file.path] = {
-				action: action,
-				file: file,
-				metadata: metadata
-			};
-			return;
-		}
-		
-		if(action == "modify" && this.plugin.settings.delayedSync > 0) {
-			this.xTimeouts.set(file.path, this.plugin.settings.delayedSync * 1000, async () => {
-				await this._processLocalEvent(action, file, metadata, forceChanged);
-			});
-		}
-		else {
-			await this._processLocalEvent(action, file, metadata, forceChanged);
-		}
-	}
-
-	async _processLocalEvent(action: string, file: TAbstractFile, metadata: any, forceChanged: boolean = false) {
-		try {
-			let result = metadata || await this.getMetadata(action, file);
-			// Skip change detection if forceChanged is true (e.g., rename)
-			if (!forceChanged && !result.changed) {
-				return;
-			}
-			
-			if (!this.anysocket.isConnected) {
-				return;
-			}
-			
-			this.debug && console.log("Sending file event:", action, file.path);
-			result.metadata.path = file.path;
-			this.anysocket.peer.send({
-				type: "file_event",
-				data: result.metadata
-			}).catch(e => {
-				console.error("Failed to send file event:", file.path, e);
-			});
+			device = JSON.parse(app.loadLocalStorage(DEVICE_KEY) || "null");
 		} catch (e) {
-			console.error("Error in _processLocalEvent:", e);
+			device = null;
 		}
+		if (!device || !device.id || !device.secret) {
+			device = { id: Utils.randomId(16), secret: Utils.randomId(32) };
+			app.saveLocalStorage(DEVICE_KEY, JSON.stringify(device));
+		}
+		return device;
 	}
 
-	registerEvent(type: any) {
-		this.eventRefs[type] = app.vault.on(type, async (file, ...args) => {
-			if (!this.isEnabled)
-				return;
-
-			await this.processLocalEvent(type, file, args);
-		});
+	platform() {
+		if (Platform.isIosApp) return "ios";
+		if (Platform.isAndroidApp) return "android";
+		if (Platform.isMacOS) return "macos";
+		if (Platform.isWin) return "windows";
+		if (Platform.isLinux) return "linux";
+		return Platform.isMobile ? "mobile" : "desktop";
 	}
 
-	unregisterEvent(type: any) {
-		app.vault.offref(this.eventRefs[type])
+	// the protocol of the last server we talked to, so changes made offline are tracked the same way
+	get lastProtocol() {
+		return parseInt(app.loadLocalStorage(PROTOCOL_KEY) || "0") || 0;
 	}
+
+	set lastProtocol(value) {
+		app.saveLocalStorage(PROTOCOL_KEY, String(value));
+	}
+
+	// ---- lifecycle ----
 
 	async load() {
-		if (!this.isEnabled)
+		if (!this.isEnabled || this.inited) {
 			return;
-
-		if (this.inited == true)
-			return;
+		}
 		this.inited = true;
 
 		this.anysocket.isEnabled = this.plugin.settings.syncEnabled;
-		this.debug = this.plugin.settings.debug;
-
 		await this.storage.init();
-		
-		this.deleteQueue = await this.storage.loadDeleteQueue();
+		if (this.lastProtocol >= 2) {
+			await this.v2.index.load();
+		}
 
 		this.registerEvent("create");
 		this.registerEvent("modify");
 		this.registerEvent("delete");
 		this.registerEvent("rename");
 
-		let focusChanged = Utils.debounce(this.onFocusChanged.bind(this), 500);
+		let focusChanged = Utils.debounce(() => this.xTimeouts.executeAll(), 500);
 		this.eventRefs["active-leaf-change"] = app.workspace.on('active-leaf-change', focusChanged);
 		this.eventRefs["layout-change"] = app.workspace.on('layout-change', focusChanged);
 
-		this.anysocket.on("connected", async (peer) => {
-			this.xNotify.notifyStatus(NotifyType.CONNECTED);
-
-			let deviceName = this.plugin.settings.deviceName || null;
-			try {
-				if(deviceName != null && deviceName != "Unknown") {
-					await peer.rpc.setDeviceId(deviceName);
-				}
-				if(!this.plugin.settings.autoSync) {
-					await peer.rpc.autoSync(this.plugin.settings.autoSync);
-				}
-			} catch (e) {
-				// anysocket 1.0 keeps the link on a reply timeout; drop it so we reconnect
-				console.error("AnySocket Sync - Device registration failed", e);
-				peer.disconnect("Device registration failed");
-				return;
-			}
-
-			if(Object.keys(this.deleteQueue).length > 0) {
-				await this.processDeleteQueue();
-			}
-
-			if(this.plugin.settings.autoSync) {
-				await this.sync();
-			}
-			else {
-				this.xNotify.notifyStatus(NotifyType.AUTO_SYNC_DISABLED);
-			}
-		});
-
-		this.anysocket.on("message", (packet) => {
-			switch (packet.msg.type) {
-				case "file_data":
-					this.onFileData(packet.msg.data, packet.peer);
-					break;
-				case "sync_complete":
-					this.onSyncCompleted(packet.peer);
-					break;
-			}
-		});
+		this.anysocket.on("ready", (peer, version) => this.onReady(peer, version).catch(e => {
+			console.error("AnySocket Sync - start failed", e);
+			peer.disconnect("start failed");
+		}));
+		this.anysocket.on("message", (packet) => this.onMessage(packet));
+		this.anysocket.on("failed", (reason) => this.status.set(reason, { pending: this.pendingCount() }));
+		this.anysocket.on("disconnected", (reason, wasConnected) => this.onDisconnected(reason, wasConnected));
 		this.anysocket.on("reload", this.reload.bind(this));
 		this.anysocket.on("unload", this.unload.bind(this));
-		this.anysocket.on("disconnected", () => {
-			this.xNotify.notifyStatus(NotifyType.CONNECTION_LOST);
-			this.debug && console.log("disconnected");
-		});
 
+		this.updateAttention();
+		this.showUpdateNotice();
+
+		if (!this.plugin.settings.syncEnabled) {
+			this.status.set("disabled");
+			return;
+		}
+		if (this.revoked) {
+			this.status.set("revoked");
+			return;
+		}
 		this.anysocket.init();
 	}
 
@@ -415,133 +159,357 @@ export default class XSync {
 		app.workspace.offref(this.eventRefs["active-leaf-change"]);
 		app.workspace.offref(this.eventRefs["layout-change"]);
 
+		this.stopEngine();
 		this.anysocket.stop();
-
 		this.anysocket.removeAllListeners();
+		if (this.v2.index.loaded) {
+			this.v2.index.save();
+		}
 	}
 
-	reload() {
+	reload(delay?: number) {
 		this.debug && console.log("reloaded");
 		this.unload();
+		clearTimeout(this.reloadTimeout);
 		this.reloadTimeout = setTimeout(() => {
 			this.load();
-		}, 1000);
+		}, delay === undefined ? this.anysocket.nextDelay() : delay);
 	}
 
-	async onFileData(data, peer) {
-		this.debug && console.log("FileData:", data);
+	destroy() {
+		this.unload();
+		this.anysocket.destroy();
+		this.status.unmount();
+	}
 
-		if(!this.plugin.settings.autoSync && !this.isSyncing) {
-			return;
+	// mobile: the app went to the background, or came back
+	onBackground(hidden: boolean) {
+		if (hidden) {
+			this.unload();
+		} else if (this.isEnabled) {
+			this.reload(0);
 		}
+	}
 
-		if(!Utils.isSafePath(data.path)) {
-			console.error("AnySocket Sync - Rejected unsafe path from server:", data.path);
-			return;
+	stopEngine() {
+		if (this.engine) {
+			this.engine.stop();
 		}
+		this.engine = null;
+		this.xTimeouts.clearAll();
+	}
 
-		if (data.type == "send") {
-			let isBinary = Utils.isBinary(data.path);
-			const fileData = isBinary ? 
-				await this.storage.readBinary(data.path) : 
-				await this.storage.read(data.path);
-			const metadata = await this.storage.readMetadata(data.path);
+	// ---- connection ----
 
-			this.anysocket.send({
-				type: "file_data",
-				data: {
-					type: "apply",
-					binary: isBinary,
-					data: isBinary ? AnySocket.Packer.pack(fileData) : fileData,
-					path: data.path,
-					metadata: metadata
-				}
+	async onReady(peer, version) {
+		this.server = { version: version.server || null, protocol: version.protocol || 1 };
+
+		let hello = null;
+		try {
+			const device = this.getDevice();
+			hello = await peer.rpc.hello({
+				id: device.id,
+				secret: device.secret,
+				name: this.plugin.settings.deviceName || "Unknown device",
+				platform: this.platform(),
+				autoSync: this.plugin.settings.autoSync
 			});
-		} else if (data.type == "apply") {
-			switch (data.metadata.action) {
-				case "created":
-					if (data.metadata.type == "folder") {
-						await this.storage.makeFolder(data.path, data.metadata);
-					} else {
-						if(data.binary) {
-							await this.storage.writeBinary(data.path, AnySocket.Packer.unpack(data.data), data.metadata);
-						}
-						else {
-							await this.storage.write(data.path, data.data, data.metadata);
-						}
-					}
-					break;
-				case "deleted":
-					await this.storage.delete(data.path, data.metadata);
-					break;
+		} catch (e) {
+			// a 1.5.x server doesn't know hello: sync the way 1.5.0 did
+			if (!isMissingMethod(e)) {
+				throw e;
 			}
+		}
+
+		if (!hello) {
+			this.protocol = 1;
+			this.lastProtocol = 1;
+			this.status.notify("connected", NOTIFY.EVERYTHING);
+			this.engine = this.legacy;
+			return this.legacy.start(peer);
+		}
+
+		this.protocol = hello.protocol || 2;
+		this.lastProtocol = this.protocol;
+		this.device = hello.device;
+		if (hello.error) {
+			this.status.set("error", { message: hello.error });
+			return;
+		}
+
+		switch (hello.device.status) {
+			case "approved":
+				this.revoked = false;
+				this.hidePendingNotice();
+				this.status.notify("connected", NOTIFY.EVERYTHING);
+				this.engine = this.v2;
+				await this.v2.start(peer, hello);
+				this.checkDeviceRequests();
+				break;
+			case "pending":
+				this.status.set("waiting_approval");
+				this.showPendingNotice();
+				break;
+			case "revoked":
+				this.onRevoked();
+				break;
+		}
+	}
+
+	onDisconnected(reason, wasConnected) {
+		this.stopEngine();
+		if (this.revoked) {
+			return;
+		}
+		if (wasConnected && this.status.state !== "updating") {
+			this.status.set("offline", { pending: this.pendingCount() });
+		}
+	}
+
+	onRevoked() {
+		this.revoked = true;
+		this.stopEngine();
+		this.hidePendingNotice();
+		this.status.set("revoked");
+		this.status.notify("this device was removed from sync. Approve it again from another device or on the server to sync again.");
+		// no reconnect loop; it tries again when the settings change or Obsidian restarts
+		clearTimeout(this.reloadTimeout);
+		this.anysocket.stop();
+	}
+
+	pendingCount() {
+		if (this.lastProtocol >= 2 && this.v2.index.loaded) {
+			return this.v2.pendingCount();
+		}
+		return Object.keys(this.legacy.unsentSessionEvents).length + Object.keys(this.legacy.deleteQueue).length;
+	}
+
+	onMessage(packet) {
+		if (!packet.msg) {
+			return;
+		}
+		switch (packet.msg.type) {
+			case "changed":
+				if (this.engine === this.v2) {
+					this.v2.onRemoteChanged(packet.msg);
+				}
+				break;
+			case "device_request":
+				this.onDeviceRequest(packet.msg.device);
+				break;
+			case "devices_changed":
+				this.status.emit("devices");
+				break;
+			case "device_status":
+				if (packet.msg.status === "approved" && !this.engine) {
+					this.status.notify("this device was approved, syncing now");
+					this.reload(0);
+				} else if (packet.msg.status === "revoked") {
+					this.onRevoked();
+				}
+				break;
+			default:
+				if (this.engine === this.legacy) {
+					this.legacy.onMessage(packet);
+				}
+		}
+	}
+
+	// ---- devices ----
+
+	showPendingNotice() {
+		if (this.pendingNotice) {
+			return;
+		}
+		const name = this.plugin.settings.deviceName;
+		this.pendingNotice = this.status.ask(
+			"\"" + name + "\" is waiting to be approved.\n\nOn a device that already syncs, open AnySocket Sync and approve it, or run on the server:\nnode cli.js devices approve \"" + name + "\"",
+			[{ label: "OK", run: () => {} }]
+		);
+	}
+
+	hidePendingNotice() {
+		if (this.pendingNotice) {
+			this.pendingNotice.hide();
+			this.pendingNotice = null;
+		}
+	}
+
+	onDeviceRequest(device) {
+		this.status.emit("devices");
+		if (!device) {
+			return;
+		}
+		this.status.ask(
+			"\"" + device.name + "\" wants to sync with this vault. Is this your device?",
+			[
+				{ label: "Approve", cta: true, run: () => this.approveDevice(device.id) },
+				{ label: "Decline", run: () => this.declineDevice(device.id) },
+				{ label: "Later", run: () => {} }
+			]
+		);
+	}
+
+	// devices waiting while we were away
+	async checkDeviceRequests() {
+		try {
+			const devices = await this.v2.listDevices();
+			for (const device of devices.filter(d => d.status === "pending" && d.online)) {
+				this.onDeviceRequest(device);
+			}
+		} catch (e) {
+			// not important enough to fail anything
+		}
+	}
+
+	async listDevices() {
+		this.assertV2();
+		return await this.v2.listDevices();
+	}
+
+	async approveDevice(id) {
+		this.assertV2();
+		const device = await this.v2.approveDevice(id);
+		this.status.notify("approved \"" + device.name + "\"");
+		this.status.emit("devices");
+		return device;
+	}
+
+	async declineDevice(id) {
+		this.assertV2();
+		const device = await this.v2.declineDevice(id);
+		this.status.emit("devices");
+		return device;
+	}
+
+	async revokeDevice(id) {
+		this.assertV2();
+		const device = await this.v2.revokeDevice(id);
+		this.status.emit("devices");
+		return device;
+	}
+
+	assertV2() {
+		if (this.engine !== this.v2) {
+			throw new Error(this.protocol === 1 ? "Device management needs the 1.6.0 server" : "Not connected");
+		}
+	}
+
+	// ---- sync ----
+
+	connectionOK() {
+		if (!this.isEnabled || !this.plugin.settings.syncEnabled) {
+			this.status.notify("sync is turned off in the settings");
+			return false;
+		}
+		if (!this.engine) {
+			this.status.notify(this.status.sentence());
+			return false;
 		}
 		return true;
 	}
 
-	async getMetadata(action, file, itemTime) {
-		let isBinary = Utils.isBinary(file.path);
-
-		let typeToAction = {
-			"sync": "created",
-			"restore": "created",
-			"create": "created",
-			"modify": "created",
-			"rename": "created",
-			"delete": "deleted"
+	async sync(full = false) {
+		if (!this.connectionOK()) {
+			return;
 		}
-
-		// Get stored metadata first (needed for deletions)
-		let storedMetadata = await this.storage.readMetadata(file.path);
-
-		let itemType;
-		let itemData;
-		let sha1;
-		
-		if (action == "restore") {
-			itemData = file.data;
-			itemType = "file";
-			sha1 = isBinary ? await Utils.getSHABinary(itemData) : await Utils.getSHA(itemData);
-		} else if (action == "delete") {
-			// File is already deleted, can't read it
-			// Preserve the last known SHA1 from stored metadata
-			itemType = file.stat ? "file" : (storedMetadata ? storedMetadata.type : "file");
-			sha1 = storedMetadata ? storedMetadata.sha1 : null;
-		} else {
-			itemData = isBinary ? await this.storage.readBinary(file.path) : await this.storage.read(file.path);
-			itemType = file.stat ? "file" : "folder";
-			sha1 = isBinary ? await Utils.getSHABinary(itemData) : await Utils.getSHA(itemData);
+		if (this.engine === this.v2) {
+			return this.v2.syncNow(full);
 		}
+		return this.legacy.syncNow();
+	}
 
-		let metadata = {
-			action: typeToAction[action],
-			sha1: sha1,
-			mtime: itemTime || await this.anysocket.getTime(),
-			type: itemType
-		};
+	registerEvent(type: any) {
+		this.eventRefs[type] = app.vault.on(type, async (file, ...args) => {
+			if (!this.isEnabled)
+				return;
 
-		if(action == "restore") {
-			return metadata;
+			if (type !== "modify") {
+				this.updateAttention();
+			}
+			try {
+				if (this.engine) {
+					await this.engine.onLocalEvent(type, file, type === "rename" ? args[0] : args);
+				} else if (this.lastProtocol >= 2) {
+					// offline: remember the change (renames too) for the next sync
+					if (this.v2.index.loaded) {
+						await this.v2.onLocalEvent(type, file, type === "rename" ? args[0] : args);
+					}
+				} else {
+					await this.legacy.onLocalEvent(type, file, args);
+				}
+			} catch (e) {
+				console.error("AnySocket Sync - local change", file && file.path, e);
+			}
+		});
+	}
+
+	unregisterEvent(type: any) {
+		app.vault.offref(this.eventRefs[type])
+	}
+
+	// ---- history ----
+
+	historyEngine() {
+		if (!this.connectionOK()) {
+			return null;
 		}
+		return this.engine;
+	}
 
-		// if the storedMetadata (sha1) is the same as the current one
-		// this means that we just wrote this file, so we skip
-		if (storedMetadata && metadata.action == storedMetadata.action && metadata.sha1 == storedMetadata.sha1) {
-			return {
-				changed: false,
-				metadata: storedMetadata
-			};
+	// ---- both versions kept / restored ----
+
+	updateAttention() {
+		clearTimeout(this.attentionTimeout);
+		this.attentionTimeout = setTimeout(() => {
+			this.status.attentionChanged(this.keptCopies().length);
+		}, 300);
+	}
+
+	keptCopies() {
+		return app.vault.getFiles().filter(f => KEPT_COPY.test(f.name)).map(f => f.path);
+	}
+
+	onKeptBoth(path, copy) {
+		const name = path.split("/").pop();
+		this.updateAttention();
+		this.status.ask(
+			"\"" + name + "\" was changed on two devices at the same time. Both versions were kept, nothing was lost.",
+			[
+				{ label: "Review", cta: true, run: () => this.plugin.openSyncPanel() },
+				{ label: "OK", run: () => {} }
+			],
+			15000
+		);
+	}
+
+	onRestored(path) {
+		this.status.notify("\"" + path.split("/").pop() + "\" was changed on another device, so it was kept instead of deleted.");
+	}
+
+	showUpdateNotice() {
+		const raw = window.localStorage.getItem("anysocket-sync-updated");
+		if (!raw) {
+			return;
 		}
-
-		await this.storage.writeMetadata(file.path, metadata);
-
-		return {
-			changed: true,
-			metadata: metadata
-		};
+		window.localStorage.removeItem("anysocket-sync-updated");
+		try {
+			const update = JSON.parse(raw);
+			if (update.to === this.plugin.VERSION) {
+				this.status.notify(update.downgrade ?
+					"your server runs version " + update.to + ", so this device switched to it (from " + update.from + ")" :
+					"updated to version " + update.to);
+			}
+		} catch (e) {
+			// ignore
+		}
 	}
 
 	makeStatusBarItem(statusbar: any) {
-		this.xNotify.makeStatusBarItem(statusbar);
+		this.status.mount(statusbar, () => this.plugin.openSyncPanel());
 	}
+}
+
+function isMissingMethod(e) {
+	return !!e && (e.code === "ENOMETHOD" || e.status === 404 || e.code === 404);
 }

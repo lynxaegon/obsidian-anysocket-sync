@@ -3,7 +3,6 @@ import {Notice, SuggestModal} from "obsidian";
 import AnySocketSyncPlugin from "../../main";
 import {VersionHistoryModal} from "./VersionHistoryModal";
 import Utils from "../Utils";
-import AnySocket from "anysocket/dist/anysocket.browser.js";
 
 interface DeletedFile {
 	path: string;
@@ -26,10 +25,17 @@ export class FilesHistoryModal extends SuggestModal<DeletedFile> {
 		else {
 			this.setPlaceholder("Search for files...");
 		}
+		this.emptyStateText = this.deletedOnly ? "No deleted files on the server" : "No files on the server";
 
-		this.plugin.xSync.listFilesHistory(this.deletedOnly,(data: any) => {
-			this.data = data;
+		this.engine = plugin.xSync.historyEngine();
+		if (!this.engine) {
+			return;
+		}
+		this.engine.listFiles(this.deletedOnly).then((data: any) => {
+			this.data = (data || []).sort((a, b) => b.mtime - a.mtime);
 			this.open();
+		}).catch((e) => {
+			new Notice("AnySocket Sync: couldn't load the files (" + (e.message || e.error || e) + ")");
 		});
 		this.containerEl.addClass("anysocket-files-history");
 	}
@@ -39,26 +45,21 @@ export class FilesHistoryModal extends SuggestModal<DeletedFile> {
 	}
 
 	async onChooseSuggestion(item: DeletedFile, evt: MouseEvent | KeyboardEvent) {
-		if(Utils.isBinary(item.path)) {
-			let parts = item.path.split("/");
-
-			await this.plugin.xSync.listVersionHistory(item.path, async (data: any) => {
-				await this.plugin.xSync.readVersionHistory(item.path, data.data[0], async (data: any) => {
-					data = AnySocket.Packer.unpack(data);
-					let metadata = await this.plugin.xSync.getMetadata(
-						"restore",
-						{
-							path: item.path,
-							data: data
-						}
-					);
-					// force an update
-					metadata.sha1 = null;
-
-					await this.plugin.xSync.storage.writeBinary(item.path, data, metadata);
-					new Notice("Restored - " + parts[parts.length - 1]);
-				});
-			});
+		// images and other binary files: bring back the newest version
+		if(Utils.isBinary(item.path) && this.plugin.xSync.protocol < 2) {
+			let name = item.path.split("/").pop();
+			try {
+				const versions = await this.engine.listVersions(item.path);
+				if (!versions || !versions.data || !versions.data.length) {
+					new Notice("No versions of " + name + " on the server");
+					return;
+				}
+				const bytes = await this.engine.readVersion(item.path, versions.data[0]);
+				await this.engine.restore(item.path, bytes);
+				new Notice("Restored - " + name);
+			} catch (e) {
+				new Notice("AnySocket Sync: couldn't restore " + name + " (" + (e.message || e.error || e) + ")");
+			}
 		}
 		else {
 			new VersionHistoryModal(this.plugin, item.path);
@@ -72,23 +73,8 @@ export class FilesHistoryModal extends SuggestModal<DeletedFile> {
 		if(this.deletedOnly) {
 			prefix = "Deleted: ";
 		}
-		el.createEl("div", { text: prefix + this.formatTimestamp(value.mtime) }).addClass("item-metadata");
-	}
-
-	private formatTimestamp(timestamp) {
-		let date =  new Date(timestamp);
-
-		let month = date.getMonth() + 1; // Months are zero-based in JavaScript
-		let day = date.getDate();
-		let year = date.getFullYear();
-		let hours = date.getHours();
-		let minutes = date.getMinutes();
-		let ampm = hours >= 12 ? 'PM' : 'AM';
-
-		hours = hours % 12;
-		hours = hours ? hours : 12; // the hour '0' should be '12'
-		minutes = minutes < 10 ? '0' + minutes : minutes; // zero-padding minutes
-
-		return `${month}/${day}/${year} ${hours}:${minutes} ${ampm}`;
+		el.createEl("div", { text: prefix + new Date(value.mtime).toLocaleString(undefined, {
+			year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"
+		}) }).addClass("item-metadata");
 	}
 }
