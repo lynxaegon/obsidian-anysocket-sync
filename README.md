@@ -4,27 +4,19 @@
 
 <a name="features"></a>
 ## Features
-* E2E encrypted Sync (transport layer)
-* Connect as many devices as you like
+* Encrypted sync (AES-256-GCM, between your devices and your server)
+* Works offline: changes made while offline sync when you're back
+* Nothing is lost when two devices change the same note: changes to different parts are combined, and if both changed the same part, both versions are kept side by side
+* Renames keep a file's history
+* Version history for every file (images and PDFs too) and recovery of deleted files
+* New devices have to be approved from a device that already syncs, or on the server
+* A sync panel (click the status bar): what's happening, what needs a look, your devices, recent activity
 * Sync all types of files across any device (works on mobile)
-* Version History (customizable retention)
-* Recover deleted files (customizable retention)
+* Handles large vaults; phones skip very large files (configurable)
 * Supports syncing on demand
-* Works offline
-* Auto updates when <a href="https://github.com/lynxaegon/obsidian-anysocket-sync-server">server</a> is updated
+* Auto updates when the <a href="https://github.com/lynxaegon/obsidian-anysocket-sync-server">server</a> is updated
 
-_**Info**: This is not a CRDT Sync (like GDocs), it's a file sync so conflicts can happen if you edit the same file on multiple devices at the same time. 
-Conflict resolution is **last write wins**_ 
-
-Coming soon:
-* Don't lose history on rename
-* 2FA for allowing other devices (increased protection)
-* Plugins sync
-
-Known issues:
-- History is lost on rename (WIP)
-
-_if you find others, please <a href="https://github.com/lynxaegon/obsidian-anysocket-sync/issues/new"> create an issue</a>_
+_if you find an issue, please <a href="https://github.com/lynxaegon/obsidian-anysocket-sync/issues/new"> create an issue</a>_
 
 ## Installation
 _Important: **Always backup your vault!**_
@@ -32,7 +24,7 @@ _Important: **Always backup your vault!**_
 2. Now install the plugin in Obsidian (Community Plugins -> `anysocket-sync`)
 3. Enable the plugin
 4. Go to settings and update the configuration
-5. Enable Sync
+5. Enable the connection (the first device is approved on its own; approve the others from it)
 6. Enjoy!
    
 ## Screenshots
