@@ -32,6 +32,7 @@ export default class Activity extends EventEmitter {
 		const name = item.path.split("/").pop();
 		switch (item.type) {
 			case "downloaded": return { icon: "arrow-down", text: "Got " + name };
+			case "updated": return { icon: "arrow-down", text: "Got the newer " + name + " (yours is in its history)" };
 			case "uploaded": return { icon: "arrow-up", text: "Sent " + name };
 			case "deleted": return { icon: "trash-2", text: "Deleted " + name };
 			case "deleted_remote": return { icon: "trash-2", text: "Deleted " + name + " everywhere" };

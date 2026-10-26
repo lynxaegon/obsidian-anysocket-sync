@@ -741,6 +741,15 @@ export default class SyncV2 {
 				this.xSync.onKeptBoth(path, result.copy);
 				break;
 
+			case "outdated":
+				// ours was older and never synced (e.g. the first sync after an update): the newer
+				// version wins, as it always did; ours is in the file's history
+				current.synced = null;
+				this.index.set(path, current);
+				await this.download(path, result.meta);
+				this.activity.add("updated", path);
+				break;
+
 			case "stale":
 				// we deleted a version that was since changed elsewhere: bring the newer one back
 				current.synced = null;
