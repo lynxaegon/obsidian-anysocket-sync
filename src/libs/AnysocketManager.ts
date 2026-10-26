@@ -43,8 +43,8 @@ export default class AnysocketManager extends EventEmitter {
 
 		console.log("AnySocket Sync (" + this.plugin.VERSION + ") - Enabled");
 		if (Platform.isMobile) {
-			// called directly: "unload" removes this emitter's listeners, so an event
-			// emitted on the way back would reach nobody and never reconnect
+			// called directly rather than through this emitter, whose listeners
+			// "unload" removes
 			this.onVisibility = () => {
 				this.isBackground = document.hidden;
 				if (!this.isBackground) {

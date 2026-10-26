@@ -112,14 +112,7 @@ export default class XSync {
 			await this.v2.index.load();
 		}
 
-		this.registerEvent("create");
-		this.registerEvent("modify");
-		this.registerEvent("delete");
-		this.registerEvent("rename");
-
-		let focusChanged = Utils.debounce(() => this.xTimeouts.executeAll(), 500);
-		this.eventRefs["active-leaf-change"] = app.workspace.on('active-leaf-change', focusChanged);
-		this.eventRefs["layout-change"] = app.workspace.on('layout-change', focusChanged);
+		this.attachVaultEvents();
 
 		this.anysocket.on("ready", (peer, version) => this.onReady(peer, version).catch(e => {
 			console.error("AnySocket Sync - start failed", e);
@@ -152,13 +145,6 @@ export default class XSync {
 			return;
 		this.inited = false;
 
-		this.unregisterEvent("create");
-		this.unregisterEvent("modify");
-		this.unregisterEvent("delete");
-		this.unregisterEvent("rename");
-		app.workspace.offref(this.eventRefs["active-leaf-change"]);
-		app.workspace.offref(this.eventRefs["layout-change"]);
-
 		this.stopEngine();
 		this.anysocket.stop();
 		this.anysocket.removeAllListeners();
@@ -178,6 +164,7 @@ export default class XSync {
 
 	destroy() {
 		this.unload();
+		this.detachVaultEvents();
 		this.anysocket.destroy();
 		this.status.unmount();
 	}
@@ -266,12 +253,14 @@ export default class XSync {
 		}
 	}
 
-	onRevoked() {
+	onRevoked(declined = false) {
 		this.revoked = true;
 		this.stopEngine();
 		this.hidePendingNotice();
-		this.status.set("revoked");
-		this.status.notify("this device was removed from sync. Approve it again from another device or on the server to sync again.");
+		this.status.set("revoked", { declined });
+		this.status.notify(declined ?
+			"this device's request to sync was declined. It will ask again the next time Obsidian starts." :
+			"this device was removed from sync. Approve it again from another device or on the server to sync again.");
 		// no reconnect loop; it tries again when the settings change or Obsidian restarts
 		clearTimeout(this.reloadTimeout);
 		this.anysocket.stop();
@@ -304,8 +293,8 @@ export default class XSync {
 				if (packet.msg.status === "approved" && !this.engine) {
 					this.status.notify("this device was approved, syncing now");
 					this.reload(0);
-				} else if (packet.msg.status === "revoked") {
-					this.onRevoked();
+				} else if (packet.msg.status === "revoked" || packet.msg.status === "declined") {
+					this.onRevoked(packet.msg.status === "declined");
 				}
 				break;
 			default:
@@ -419,6 +408,39 @@ export default class XSync {
 		return this.legacy.syncNow();
 	}
 
+	/**
+	 * Vault events stay attached while the plugin is enabled, also while (re)connecting
+	 * or in the background: a change made during an outage is recorded right away
+	 * (1.5.0 detached them on every reconnect, so changes made meanwhile could be missed).
+	 */
+	attachVaultEvents() {
+		if (this.vaultEventsAttached) {
+			return;
+		}
+		this.vaultEventsAttached = true;
+		this.registerEvent("create");
+		this.registerEvent("modify");
+		this.registerEvent("delete");
+		this.registerEvent("rename");
+
+		let focusChanged = Utils.debounce(() => this.xTimeouts.executeAll(), 500);
+		this.eventRefs["active-leaf-change"] = app.workspace.on('active-leaf-change', focusChanged);
+		this.eventRefs["layout-change"] = app.workspace.on('layout-change', focusChanged);
+	}
+
+	detachVaultEvents() {
+		if (!this.vaultEventsAttached) {
+			return;
+		}
+		this.vaultEventsAttached = false;
+		this.unregisterEvent("create");
+		this.unregisterEvent("modify");
+		this.unregisterEvent("delete");
+		this.unregisterEvent("rename");
+		app.workspace.offref(this.eventRefs["active-leaf-change"]);
+		app.workspace.offref(this.eventRefs["layout-change"]);
+	}
+
 	registerEvent(type: any) {
 		this.eventRefs[type] = app.vault.on(type, async (file, ...args) => {
 			if (!this.isEnabled)
@@ -428,8 +450,11 @@ export default class XSync {
 				this.updateAttention();
 			}
 			try {
-				if (this.engine) {
-					await this.engine.onLocalEvent(type, file, type === "rename" ? args[0] : args);
+				// v2 takes the old path of a rename; the 1.5.0 sync takes the event's arguments as they are
+				if (this.engine === this.v2) {
+					await this.v2.onLocalEvent(type, file, type === "rename" ? args[0] : args);
+				} else if (this.engine === this.legacy) {
+					await this.legacy.onLocalEvent(type, file, args);
 				} else if (this.lastProtocol >= 2) {
 					// offline: remember the change (renames too) for the next sync
 					if (this.v2.index.loaded) {

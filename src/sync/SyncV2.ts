@@ -38,6 +38,20 @@ function toArrayBuffer(bytes: Uint8Array) {
 }
 
 const depth = (path) => path.split("/").length;
+
+// files in flight at once; the server locks per path, so different files never interfere
+const PARALLEL = 8;
+
+// fn over every item, at most `limit` at a time
+async function parallel<T>(items: T[], limit: number, fn: (item: T) => Promise<any>) {
+	let next = 0;
+	const worker = async () => {
+		while (next < items.length) {
+			await fn(items[next++]);
+		}
+	};
+	await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(worker));
+}
 const fileName = (path) => path.split("/").pop();
 
 /**
@@ -332,11 +346,17 @@ export default class SyncV2 {
 		const creates = entries.filter(e => e[1].action !== "deleted").sort((a, b) => depth(a[0]) - depth(b[0]));
 		const deletes = entries.filter(e => e[1].action === "deleted").sort((a, b) => depth(b[0]) - depth(a[0]));
 
-		for (const [path, meta] of creates) {
+		// folders first and in order (a renamed folder takes its files along), then files in parallel
+		for (const [path, meta] of creates.filter(e => e[1].type === "folder")) {
 			if (!this.running) return;
 			await this.safely(path, () => this.applyCreated(path, meta, renamedTo.get(path)));
 			progress();
 		}
+		await parallel(creates.filter(e => e[1].type !== "folder"), PARALLEL, async ([path, meta]) => {
+			if (!this.running) return;
+			await this.safely(path, () => this.applyCreated(path, meta, renamedTo.get(path)));
+			progress();
+		});
 		for (const [path, meta] of deletes) {
 			if (!this.running) return;
 			await this.safely(path, () => this.applyDeleted(path, meta));
@@ -550,13 +570,24 @@ export default class SyncV2 {
 			const ea = this.index.get(a), eb = this.index.get(b);
 			return rank(ea) - rank(eb) || (ea.action === "deleted" ? depth(b) - depth(a) : depth(a) - depth(b));
 		});
-		for (const path of dirty) {
+		const pushOne = async (path) => {
 			if (!this.running) return;
 			const entry = this.index.get(path);
 			if (entry && isDirty(entry)) {
 				await this.safely(path, () => this.push(path));
 			}
 			progress();
+		};
+		// renames and folders in order; files (new, changed or deleted) in parallel
+		for (const group of [0, 1, 2, 3, 4]) {
+			const paths = dirty.filter(path => rank(this.index.get(path)) === group);
+			if (group === 2 || group === 3) {
+				await parallel(paths, PARALLEL, pushOne);
+			} else {
+				for (const path of paths) {
+					await pushOne(path);
+				}
+			}
 		}
 	}
 

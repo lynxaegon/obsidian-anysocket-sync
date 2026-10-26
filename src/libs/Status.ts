@@ -115,7 +115,7 @@ export default class Status extends EventEmitter {
 			case "auth_failed": return "Wrong password";
 			case "updating": return "Updating plugin…";
 			case "waiting_approval": return "Waiting for approval";
-			case "revoked": return "Device removed";
+			case "revoked": return info.declined ? "Request declined" : "Device removed";
 			case "syncing": return info.total > 1 ? "Syncing " + Math.min(info.done, info.total) + "/" + info.total : "Syncing…";
 			case "synced": {
 				const ago = Date.now() - this.lastSync > 60 * 1000 ? " " + Utils.ago(this.lastSync) : "";
@@ -140,7 +140,9 @@ export default class Status extends EventEmitter {
 			case "auth_failed": return "The server didn't accept the password. Check it in the settings.";
 			case "updating": return "Installing the server's version of the plugin…";
 			case "waiting_approval": return "This device needs to be approved before it can sync. Approve it from a device that already syncs (AnySocket Sync → Devices), or on the server.";
-			case "revoked": return "This device was removed from sync. Approve it again on the server or from another device to sync again.";
+			case "revoked": return info.declined ?
+				"This device's request to sync was declined. It asks again the next time Obsidian starts, or when you change the settings." :
+				"This device was removed from sync. Approve it again on the server or from another device to sync again.";
 			case "syncing": return info.total > 1 ? "Syncing " + Math.min(info.done, info.total) + " of " + info.total + " changes…" : "Syncing…";
 			case "synced": return "Everything is up to date" + (this.lastSync ? " (last synced " + Utils.ago(this.lastSync) + ")" : "") + ".";
 			case "paused": return "Auto sync is off. Use \"Sync now\" to sync" + (this.pending > 0 ? " your " + this.pending + " waiting changes" : "") + ".";
