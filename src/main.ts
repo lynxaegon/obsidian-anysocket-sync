@@ -386,6 +386,13 @@ class AnySocketSyncSettingTab extends PluginSettingTab {
 					this.plugin.xSync.status.notify("rebuilding the index");
 				})
 			);
+
+		// heads-up for the anysocket 1.1 release; remove it in 1.7
+		containerEl.createEl("p", {
+			cls: "anysocket-settings-footnote",
+			text: "Coming in 1.7: devices still on AnySocket Sync 1.5 or older won't be able to connect, so update them before then. " +
+				"1.7 also connects only over SSL (wss) by default; if your server has no SSL, turn on \"Allow insecure connection\" after updating."
+		});
 	}
 
 	hide() {

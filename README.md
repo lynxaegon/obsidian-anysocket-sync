@@ -26,6 +26,8 @@ _Important: **Always backup your vault!**_
 4. Go to settings and update the configuration
 5. Enable the connection (the first device is approved on its own; approve the others from it)
 6. Enjoy!
+
+_Coming in 1.7: devices on 1.5 or older won't be able to connect, so update them before then. 1.7 also connects only over SSL (wss) by default; if your server has no SSL, turn on "Allow insecure connection" in the settings after updating._
    
 ## Screenshots
 ![Commands](https://github.com/lynxaegon/obsidian-anysocket-sync/raw/master/screenshots/info_1.png)
